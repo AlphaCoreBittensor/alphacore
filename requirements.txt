@@ -1,0 +1,21 @@
+# Google Cloud SDK dependencies
+google-cloud-storage
+google-cloud-iam
+google-cloud-resource-manager
+google-cloud-pubsub
+google-cloud-compute
+google-cloud-run
+google-cloud-artifact-registry
+# Azure SDK dependencies
+azure-identity
+azure-mgmt-resource
+azure-mgmt-storage
+azure-mgmt-network
+azure-mgmt-msi
+azure-mgmt-authorization
+azure-mgmt-web
+# Bittensor package
+bittensor
+
+# Natural language instructions for task prompts
+openai
