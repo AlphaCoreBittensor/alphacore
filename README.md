@@ -73,9 +73,3 @@ AlphaCore is intended to expand beyond the current “Terraform + sandbox valida
 - `modules/` — task generation and the sandboxed validation stack.
 - `scripts/` — operational scripts (PM2 launchers, setup helpers).
 - `logs/` — PM2 logs and validation artifacts (submissions/logs).
-
-## Common Commands
-
-- Miner (PM2): see [`MINER.md`](MINER.md)
-- Validator (PM2): see [`VALIDATOR.md`](VALIDATOR.md)
-- Validation API (PM2): see [`VALIDATOR-API.md`](VALIDATOR-API.md)
