@@ -1,4 +1,4 @@
-# Validation API (Firecracker sandbox)
+# Validation API
 
 The Validation API is a small HTTP service that runs **sandboxed task validation**. It executes untrusted miner submissions inside Firecracker microVMs and returns a score.
 
