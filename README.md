@@ -57,12 +57,12 @@ sequenceDiagram
   BT-->>M: Rewards
 ```
 
-## Roadmap (Aspirational)
+## Roadmap
 
 AlphaCore is intended to expand beyond the current “Terraform + sandbox validation” focus:
 
-- additional clouds and providers (beyond GCP)
-- decentralized providers and protocols
+- additional clouds and providers (beyond GCP, decentralized)
+- open source
 - task types beyond Terraform generation (configuration, deployments, ops workflows, etc.)
 - stronger provenance / attestation mechanisms as the protocol evolves
 
