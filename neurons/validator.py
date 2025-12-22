@@ -12,11 +12,6 @@ Implements the complete validator lifecycle with improved patterns from Autoppia
 8. FINALIZATION: Set weights based on scores
 9. RECOVERY: Resume from checkpoint if crash
 
-Benefits:
-- 3x faster recovery from crashes (3-5 min vs 10+ min)
-- 20% bandwidth saved (skip offline miners)
-- 2x faster convergence (real-time feedback)
-- 8/10 fault tolerance (up from 5/10)
 """
 
 from __future__ import annotations
@@ -127,7 +122,7 @@ class Validator(
 
 		# Initialize round management with epoch-based timing
 		bt.logging.info(f"Validator init: subtensor={getattr(self, 'subtensor', 'NOT SET')}")
-		
+
 		# Get tempo - it's a method that needs netuid parameter
 		tempo = DEFAULT_TEMPO
 		if self.subtensor and hasattr(self.subtensor, "tempo") and callable(self.subtensor.tempo):
@@ -138,7 +133,7 @@ class Validator(
 			except Exception as exc:
 				bt.logging.debug(f"Tempo lookup failed: {exc}")
 				tempo = DEFAULT_TEMPO
-		
+
 		round_duration_blocks = max(1, int(ROUND_SIZE_EPOCHS * tempo - SAFETY_BUFFER_EPOCHS * tempo))
 		self.tempo = tempo
 		self.round_duration_blocks = round_duration_blocks
@@ -515,7 +510,7 @@ class Validator(
 	async def forward(self) -> None:
 		"""
 		Execute one complete hybrid validator round with durability.
-		
+
 		This is called by the base validator's run loop (concurrent_forward).
 		Each call represents one validation cycle with all phases:
 		1. GENERATION: Create tasks with pre-generation pool
@@ -525,7 +520,7 @@ class Validator(
 		5. EVALUATION: Score miners incrementally
 		6. FEEDBACK: Send per-task feedback (real-time learning)
 		7. FINALIZATION: Set weights based on scores
-		
+
 		Recovery:
 		- Load checkpoint if validator crashed mid-round
 		- Resume from where it left off
@@ -538,7 +533,7 @@ class Validator(
 		active_uids: List[int] = []
 		responses: Dict[int, Any] = {}
 		scores: Dict[int, float] = {}
-		
+
 		try:
 			# Timed mode: run cycles on wall-clock cadence (local development).
 			if self._loop_mode == "timed":
