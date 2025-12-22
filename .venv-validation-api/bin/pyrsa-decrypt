@@ -1,7 +1,0 @@
-#!/home/djackson/alphacore-public/.venv-validation-api/bin/python
-import sys
-from rsa.cli import decrypt
-if __name__ == '__main__':
-    if sys.argv[0].endswith('.exe'):
-        sys.argv[0] = sys.argv[0][:-4]
-    sys.exit(decrypt())

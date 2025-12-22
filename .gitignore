@@ -187,3 +187,6 @@ cython_debug/
 
 testing/
 data/mongodb_data/
+
+# local virtualenv
+.venv-validation-api/
