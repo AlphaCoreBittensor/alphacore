@@ -6,9 +6,9 @@ Today, the repo focuses on **Terraform-based tasks on Google Cloud (GCP)** valid
 
 ## Readmes
 
-- `VALIDATOR.md` — run the validator neuron (task dispatch + scoring).
-- `VALIDATOR-API.md` — run the Firecracker-backed sandbox Validation API (used to score miner submissions).
-- `MINER.md` — run the example miner and build your own miner entrypoint.
+- [`VALIDATOR.md`](VALIDATOR.md) — run the validator neuron (task dispatch + scoring).
+- [`VALIDATOR-API.md`](VALIDATOR-API.md) — run the Firecracker-backed sandbox Validation API (used to score miner submissions).
+- [`MINER.md`](MINER.md) — run the example miner and build your own miner entrypoint.
 
 ## High-Level Overview
 
@@ -36,9 +36,9 @@ This repo is actively evolving. The current implementation emphasizes sandboxing
 - **Validator-side sandboxing for untrusted inputs (today)**: untrusted inputs (e.g., a miner’s Terraform submission) are processed inside Firecracker microVMs with strict egress controls.
 - **Outcome-focused scoring**: tasks include machine-checkable requirements (“invariants”) that are validated against outputs (today: typically `terraform.tfstate`).
 
-For details on the current sandbox model, see `VALIDATOR-API.md`.
+For details on the current sandbox model, see [`VALIDATOR-API.md`](VALIDATOR-API.md).
 
-## Execution Sequence (Conceptual)
+## Execution Sequence
 
 ```mermaid
 sequenceDiagram
@@ -77,5 +77,5 @@ AlphaCore is intended to expand beyond the current “Terraform + sandbox valida
 ## Common Commands
 
 - Miner (PM2): see `MINER.md`
-- Validator (PM2): see `VALIDATOR.md`
-- Validation API (PM2): see `VALIDATOR-API.md`
+- Validator (PM2): see [`VALIDATOR.md`](VALIDATOR.md)
+- Validation API (PM2): see [`VALIDATOR-API.md`](VALIDATOR-API.md)
