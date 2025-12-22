@@ -13,6 +13,23 @@ During validation:
 - The validator checks each invariant against that state and marks it pass/fail.
 - The sandbox returns a `score` in `[0..1]` based on how many invariants passed (and `pass` requires all invariants to pass).
 
+## Scoring summary
+
+At a high level, the validator computes per-miner scores like this:
+
+- **Per task**: the miner must include a submission ZIP (`workspace_zip_b64`). The validator submits it to the Validation API along with the task JSON (including invariants). The API returns a `score` in `[0..1]` (invariants passed / total).
+- **Per miner (per round)**: the validator averages task scores across all tasks evaluated for that miner (default is one task per round/epoch).
+- **Default cadence (epoch mode)**: each validator starts at most one round per epoch by default, and the default round size is one task — effectively **one task per epoch per validator** unless you override the loop/task settings.
+- **Optional latency mixing**: if enabled, the validator combines the API score with a relative latency score using weights (`ALPHACORE_API_SCORE_WEIGHT`, `ALPHACORE_LATENCY_SCORE_WEIGHT`). If the API score is `0`, latency is ignored and the final score remains `0` (fail-closed).
+
+
+## Incentives
+
+After scoring, the validator runs a settlement step that determines on-chain weights for the round:
+
+- **Winner-take-all among active miners**: the winner is the highest-scoring UID among the miners the validator considered “active” that round. If no active miner has a positive score, the validator skips setting weights.
+
+
 ## Prerequisites
 
 - On-chain: your hotkey must already be registered on the subnet (`netuid`) you plan to validate on. By default the launcher skips registration; you can opt in with `--register`.
