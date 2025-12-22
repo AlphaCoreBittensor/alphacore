@@ -76,6 +76,6 @@ AlphaCore is intended to expand beyond the current “Terraform + sandbox valida
 
 ## Common Commands
 
-- Miner (PM2): see `MINER.md`
+- Miner (PM2): see [`MINER.md`](MINER.md)
 - Validator (PM2): see [`VALIDATOR.md`](VALIDATOR.md)
 - Validation API (PM2): see [`VALIDATOR-API.md`](VALIDATOR-API.md)
