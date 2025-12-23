@@ -59,7 +59,7 @@ bash scripts/miner/process/launch_miner.sh \
   --wallet-path "$HOME/.bittensor/wallets" \
   --axon-port 8091 \
   --external-ip <public_ip> \
-  --entrypoint miney.py
+  --entrypoint miner.py
 ```
 
 For runs on testnet:
