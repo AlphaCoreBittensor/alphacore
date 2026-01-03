@@ -64,9 +64,12 @@ for arg in $CMDLINE; do
 done
 
 WORKSPACE_DEVICE="/dev/vdb"
-RESULTS_DEVICE="/dev/vdc"
-VALIDATOR_DEVICE="/dev/vdd"
+WORKSPACE_RW_DEVICE="/dev/vdc"
+RESULTS_DEVICE="/dev/vdd"
+VALIDATOR_DEVICE="/dev/vde"
 SRC_WORKDIR="/run/workspace-src"
+SCRATCH_MNT="/run/workspace-scratch"
+OVERLAY_WORKDIR="/run/workspace-ovl-work"
 WORKDIR="/run/workspace-run"
 RESULTS_DIR="/run/results"
 VALIDATOR_DIR="/tmp/validator"
@@ -296,6 +299,22 @@ if ! prepare_workspace; then
     exit 1
 fi
 
+ERROR_CONTEXT="Failed to mount workspace scratch volume"
+if [ -b "$WORKSPACE_RW_DEVICE" ]; then
+    mkdir -p "$SCRATCH_MNT"
+    if mount -t ext4 "$WORKSPACE_RW_DEVICE" "$SCRATCH_MNT"; then
+        echo "[Guest] Workspace scratch mounted at $SCRATCH_MNT"
+    else
+        echo "[Guest] ERROR: Failed to mount workspace scratch volume."
+        echo "[Guest] TEST_FAILED"
+        exit 1
+    fi
+else
+    echo "[Guest] ERROR: No workspace scratch drive provided."
+    echo "[Guest] TEST_FAILED"
+    exit 1
+fi
+
 ERROR_CONTEXT="Failed to mount results volume"
 if [ -b "$RESULTS_DEVICE" ]; then
     mkdir -p "$RESULTS_DIR"
@@ -328,13 +347,16 @@ else
     exit 1
 fi
 
-ERROR_CONTEXT="Failed to copy workspace into run directory"
-mkdir -p "$WORKDIR"
-if ! cp -a "$SRC_WORKDIR"/. "$WORKDIR"/; then
-    echo "[Guest] ERROR: Failed to copy workspace into run directory."
+ERROR_CONTEXT="Failed to mount overlay workspace"
+UPPER_DIR="$SCRATCH_MNT/upper"
+WORK_DIR="$SCRATCH_MNT/work"
+mkdir -p "$UPPER_DIR" "$WORK_DIR" "$WORKDIR"
+if ! mount -t overlay overlay -o "lowerdir=$SRC_WORKDIR,upperdir=$UPPER_DIR,workdir=$WORK_DIR" "$WORKDIR"; then
+    echo "[Guest] ERROR: Failed to mount overlay workspace."
     echo "[Guest] TEST_FAILED"
     exit 1
 fi
+echo "[Guest] Workspace overlay mounted at $WORKDIR (lower=$SRC_WORKDIR, upper=$UPPER_DIR)"
 
 cd "$WORKDIR"
 export HOME="$WORKDIR"

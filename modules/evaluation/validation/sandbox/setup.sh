@@ -12,7 +12,10 @@ PROVIDER_RANDOM_VERSION="3.7.2"
 
 FIRECRACKER_VERSION="v1.13.1"
 UBUNTU_CODENAME="jammy"   # 22.04 LTS
-ROOTFS_SIZE_MB=2048       # Size of sandbox rootfs image
+# Size of sandbox rootfs image (can override with ACORE_ROOTFS_SIZE_MB)
+ROOTFS_SIZE_MB="${ACORE_ROOTFS_SIZE_MB:-2048}"
+# Ubuntu mirror (override with ACORE_UBUNTU_MIRROR, keep trailing path off)
+UBUNTU_MIRROR="${ACORE_UBUNTU_MIRROR:-http://us-central1.gce.archive.ubuntu.com/ubuntu}"
 
 ### PATHS ###
 TF_BIN_DIR="/usr/local/bin"
@@ -64,6 +67,7 @@ echo "google-beta:         ${PROVIDER_GOOGLE_BETA_VERSION}"
 echo "random:              ${PROVIDER_RANDOM_VERSION}"
 echo "Firecracker:         ${FIRECRACKER_VERSION}"
 echo "Ubuntu rootfs:       ${UBUNTU_CODENAME}, ${ROOTFS_SIZE_MB}MB"
+echo "Ubuntu mirror:       ${UBUNTU_MIRROR}"
 echo
 
 ########################################
@@ -106,14 +110,18 @@ fi
 ########################################
 # 1b. Install gcloud CLI
 ########################################
-echo "==> Installing Google Cloud CLI (gcloud)..."
-install -m 0755 -d /usr/share/keyrings
-curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-  | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-  > /etc/apt/sources.list.d/google-cloud-sdk.list
-apt-get update -y
-apt-get install -y google-cloud-cli
+if command -v gcloud >/dev/null 2>&1; then
+  echo "==> gcloud already installed, skipping."
+else
+  echo "==> Installing Google Cloud CLI (gcloud)..."
+  install -m 0755 -d /usr/share/keyrings
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update -y
+  apt-get install -y google-cloud-cli
+fi
 
 ########################################
 # 2. Install Terraform
@@ -371,7 +379,7 @@ rm -rf "${ROOTFS_BUILD_DIR}" "${ACORE_ROOTFS_IMG}" "${ROOTFS_MNT_DIR}"
 mkdir -p "${ROOTFS_BUILD_DIR}" "${ROOTFS_MNT_DIR}"
 
 # Create minimal Ubuntu rootfs
-debootstrap --variant=minbase --arch=amd64 "${UBUNTU_CODENAME}" "${ROOTFS_BUILD_DIR}" http://archive.ubuntu.com/ubuntu/
+debootstrap --variant=minbase --arch=amd64 "${UBUNTU_CODENAME}" "${ROOTFS_BUILD_DIR}" "${UBUNTU_MIRROR}"
 
 # Create sandbox users for Terraform runner and validator
 echo "==> Creating sandbox users..."
@@ -398,8 +406,8 @@ EOF
 
 # Ensure apt sources include main + updates + security.
 cat > "${ROOTFS_BUILD_DIR}/etc/apt/sources.list" <<EOF
-deb http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME} main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+deb ${UBUNTU_MIRROR} ${UBUNTU_CODENAME} main restricted universe multiverse
+deb ${UBUNTU_MIRROR} ${UBUNTU_CODENAME}-updates main restricted universe multiverse
 deb http://security.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-security main restricted universe multiverse
 EOF
 

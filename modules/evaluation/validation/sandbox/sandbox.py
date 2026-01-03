@@ -94,6 +94,7 @@ class SandboxConfig:
     acore_tap: str = "acore-tap0"
     mem_mb: int = 512
     vcpus: int = 1
+    workspace_rw_size_mb: int = int(os.environ.get("ACORE_WORKSPACE_RW_MB", "2048"))
     log_file: Optional[Path] = None
     jailer_uid: Optional[int] = None
     jailer_gid: Optional[int] = None
@@ -119,6 +120,10 @@ class SandboxConfig:
     @property
     def workspace_image(self) -> Path:
         return self.chroot / "workspace.ext4"
+
+    @property
+    def workspace_rw_image(self) -> Path:
+        return self.chroot / "workspace-rw.ext4"
 
     @property
     def results_image(self) -> Path:
@@ -643,6 +648,24 @@ def build_workspace_image(workspace_dir: Path, config: SandboxConfig) -> None:
     _chown(config.workspace_image, config.jailer_uid, config.jailer_gid)
 
 
+def build_workspace_rw_image(config: SandboxConfig) -> None:
+    """Create a writable scratch image for overlay upper/workdir (keeps base workspace read-only)."""
+    if config.workspace_rw_image.exists():
+        config.workspace_rw_image.unlink()
+    with config.workspace_rw_image.open("wb") as fh:
+        fh.truncate(config.workspace_rw_size_mb * 1024 * 1024)
+    run(
+        [
+            "mkfs.ext4",
+            "-F",
+            "-E",
+            "lazy_itable_init=1,lazy_journal_init=1",
+            str(config.workspace_rw_image),
+        ]
+    )
+    _chown(config.workspace_rw_image, config.jailer_uid, config.jailer_gid)
+
+
 def build_results_image(config: SandboxConfig, size_mb: int = 8) -> None:
     """Create a tiny ext4 image for result artifacts."""
     if config.results_image.exists():
@@ -1050,6 +1073,7 @@ def main() -> int:
                 copy_into_workspace(include, workspace_dir)
             validator_bundle_dir = build_validator_bundle(DEFAULT_VALIDATE_SCRIPT)
             build_workspace_image(workspace_dir, config)
+            build_workspace_rw_image(config)
             print("==> [Host] Preparing results image...")
             build_results_image(config)
             print("==> [Host] Preparing validator bundle image...")
@@ -1115,6 +1139,11 @@ def main() -> int:
                 config.api_socket,
                 "drives/workspace",
                 '{"drive_id": "workspace", "path_on_host": "/workspace.ext4", "is_root_device": false, "is_read_only": true}',
+            )
+            curl_put(
+                config.api_socket,
+                "drives/workspacerw",
+                '{"drive_id": "workspacerw", "path_on_host": "/workspace-rw.ext4", "is_root_device": false, "is_read_only": false}',
             )
             curl_put(
                 config.api_socket,
