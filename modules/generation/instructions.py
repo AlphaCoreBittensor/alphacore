@@ -496,7 +496,8 @@ class TaskInstructionGenerator:
         ]
         pinned_terms = list(self._pinned_terms_for_llm(task))
         random.shuffle(pinned_terms)
-        pinned_terms_str = " | ".join(pinned_terms)
+        # Present tokens comma-separated to discourage raw pipe-delimited dumps in the final prompt.
+        pinned_terms_str = ", ".join(pinned_terms)
         base_user_prompt = textwrap.dedent(
             f"""
             Compose miner instructions for the following task metadata.
@@ -515,7 +516,7 @@ class TaskInstructionGenerator:
             - Do not add requirements or artefacts beyond what is described above.
 
             Hard constraint:
-            - Include each of these exact tokens somewhere in the response text (do not output them as a list): {pinned_terms_str}
+            - Weave each of these tokens naturally into the sentences (do not group or list them; spread them across the prose): {pinned_terms_str}
 
             Verbatim sentences (include each sentence exactly once):
             - {verifier_sentence}
