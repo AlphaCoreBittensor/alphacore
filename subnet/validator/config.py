@@ -194,6 +194,23 @@ MINER_RESPONSE_TIMEOUT_SECONDS = _env_int(
     "ALPHACORE_MINER_RESPONSE_TIMEOUT_SECONDS", _MINER_TIMEOUT_DEFAULT
 )
 
+# Synapse-specific timeouts (seconds) -------------------------------------- #
+#
+# Historically, we used MINER_RESPONSE_TIMEOUT_SECONDS for both:
+#   - StartRoundSynapse handshake (liveness probe)
+#   - TaskSynapse dispatch (task execution)
+#
+# These have different needs: handshake should be short (skip dead miners fast),
+# while task execution can be much longer.  We will potentially be switching to a push/poll model.
+#
+# Defaults:
+#   - handshake: 5s
+#   - task synapse: 3600s (1 hour)
+HANDSHAKE_TIMEOUT_SECONDS = _env_int("ALPHACORE_HANDSHAKE_TIMEOUT_SECONDS", 5)
+TASK_SYNAPSE_TIMEOUT_SECONDS = _env_int(
+    "ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS", 3600
+)
+
 # Enable latency-aware scoring where slower miners are penalized
 LATENCY_SCORING_ENABLED = _str_to_bool(
     os.getenv("ALPHACORE_LATENCY_SCORING_ENABLED", "true" if TESTING else "false")
@@ -297,6 +314,8 @@ __all__ = [
     "QUALITY_THRESHOLD",
     "SCORE_WINDOW_SIZE",
     "MINER_RESPONSE_TIMEOUT_SECONDS",
+    "HANDSHAKE_TIMEOUT_SECONDS",
+    "TASK_SYNAPSE_TIMEOUT_SECONDS",
     "LATENCY_SCORING_ENABLED",
     "TIME_WEIGHT_BETA",
     "API_SCORE_WEIGHT",

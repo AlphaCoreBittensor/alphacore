@@ -20,7 +20,7 @@ from typing import Dict, Optional
 import bittensor as bt
 
 from subnet.protocol import StartRoundSynapse
-from subnet.validator.config import MINER_RESPONSE_TIMEOUT_SECONDS, MINER_CONCURRENCY
+from subnet.validator.config import HANDSHAKE_TIMEOUT_SECONDS, MINER_CONCURRENCY
 from subnet.validator.task_ledger import TaskLedger
 
 
@@ -92,9 +92,9 @@ class HandshakeMixin:
                                 axons=[ax],
                                 synapse=synapse,
                                 deserialize=False,
-                                timeout=MINER_RESPONSE_TIMEOUT_SECONDS,
+                                timeout=HANDSHAKE_TIMEOUT_SECONDS,
                             ),
-                            timeout=float(MINER_RESPONSE_TIMEOUT_SECONDS) + 5.0,
+                            timeout=float(HANDSHAKE_TIMEOUT_SECONDS) + 5.0,
                         )
                     resp_single = resp[0] if isinstance(resp, (list, tuple)) and resp else resp
                     latency = time.time() - start
@@ -138,7 +138,7 @@ class HandshakeMixin:
 
             bt.logging.info(
                 f"Handshake querying {len(miner_uids)}/{len(uid_list)} miners "
-                f"(timeout={MINER_RESPONSE_TIMEOUT_SECONDS}s, concurrency={MINER_CONCURRENCY})"
+                f"(timeout={HANDSHAKE_TIMEOUT_SECONDS}s, concurrency={MINER_CONCURRENCY})"
             )
             if debug:
                 bt.logging.debug(f"MINER_UIDS_FILTERED: {miner_uids}")

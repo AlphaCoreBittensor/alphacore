@@ -15,6 +15,7 @@ import bittensor as bt
 from modules.models import ACTaskSpec
 from subnet.protocol import TaskSynapse
 from subnet.validator.config import MINER_CONCURRENCY
+from subnet.validator.config import TASK_SYNAPSE_TIMEOUT_SECONDS
 from subnet.validator.task_ledger import TaskLedger
 
 
@@ -88,7 +89,6 @@ class TaskDispatchMixin:
 
         try:
             # Send each task synapse to all miners via dendrite
-            from subnet.validator.config import MINER_RESPONSE_TIMEOUT_SECONDS
             sem = asyncio.Semaphore(max(1, int(MINER_CONCURRENCY)))
 
             async def _send_task_to_miner(
@@ -102,7 +102,7 @@ class TaskDispatchMixin:
                             axons=[ax],
                             synapse=synapse,
                             deserialize=False,
-                            timeout=MINER_RESPONSE_TIMEOUT_SECONDS,
+                            timeout=TASK_SYNAPSE_TIMEOUT_SECONDS,
                         )
                     # dendrite returns a list when axons is a list
                     resp0 = resp[0] if isinstance(resp, (list, tuple)) and resp else resp
