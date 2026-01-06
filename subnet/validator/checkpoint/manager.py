@@ -7,7 +7,7 @@ Enables crash recovery and round state persistence.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Optional
 

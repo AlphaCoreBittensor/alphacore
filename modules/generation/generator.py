@@ -7,16 +7,19 @@ the hierarchical configuration in task_config.yaml.
 
 from __future__ import annotations
 
+import os
 import random
 from typing import Optional
 
-from modules.models import ACPolicy, ACTaskSpec, VerifyPlan
 from modules.generation.instructions import TaskInstructionGenerator
-from modules.models import TerraformTask
 from modules.generation.terraform.providers.gcp.task_bank import (
     GCPDynamicTaskBank,
 )
 from modules.generation.yaml_config import get_yaml_config
+from modules.models import ACPolicy, ACTaskSpec, VerifyPlan
+from modules.models import TerraformTask
+
+DEFAULT_VALIDATOR_SA = os.getenv("ALPHACORE_VALIDATOR_SA", "")
 
 
 class TaskGenerator:
@@ -45,12 +48,12 @@ class TaskGenerator:
         Initialize task generator.
 
         Args:
-            validator_sa: Service account email for validator. If None, uses config setting.
+            validator_sa: Service account email for validator. If None, uses ALPHACORE_VALIDATOR_SA (or empty string).
             instruction_generator: Custom instruction generator. If None, creates default.
             config_path: Path to YAML config file. If None, uses auto-discovery.
         """
         self.config = get_yaml_config(config_path)
-        self.validator_sa = validator_sa or self.config.settings.validator_sa
+        self.validator_sa = validator_sa or DEFAULT_VALIDATOR_SA
         self.instruction_generator = instruction_generator
 
         # Create instruction generator based on config

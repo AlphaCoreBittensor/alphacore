@@ -42,6 +42,8 @@ SINGLE_RESOURCE_FAMILIES: Sequence[CompositionFamily] = (
     CompositionFamily("single_bucket", ("storage_bucket",)),
     CompositionFamily("single_artifact_repo", ("artifact_repository",)),
     CompositionFamily("single_pubsub_topic", ("pubsub_topic",)),
+    CompositionFamily("single_dns_zone", ("dns_managed_zone",)),
+    CompositionFamily("single_secret", ("secret_manager_secret",)),
 )
 
 COMPOSITE_FAMILIES: Sequence[CompositionFamily] = (

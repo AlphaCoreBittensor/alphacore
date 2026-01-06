@@ -444,6 +444,13 @@ if [[ "$AUTOUPDATE_ENABLED" == "true" ]]; then
     if [[ -n "${VENV_DIR:-}" ]]; then
       echo "VALIDATOR_VENV_DIR=${VENV_DIR}"
     fi
+    if [[ -n "${OPENAI_API_KEY_ARG:-}" ]]; then
+      echo "ALPHACORE_OPENAI_API_KEY=${OPENAI_API_KEY_ARG}"
+    elif [[ -n "${ALPHACORE_OPENAI_API_KEY:-}" ]]; then
+      echo "ALPHACORE_OPENAI_API_KEY=${ALPHACORE_OPENAI_API_KEY}"
+    elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+      echo "ALPHACORE_OPENAI_API_KEY=${OPENAI_API_KEY}"
+    fi
     if ((${#VALIDATOR_EXTRA_ARGS[@]} > 0)); then
       printf 'VALIDATOR_EXTRA_ARGS="%s"\n' "${VALIDATOR_EXTRA_ARGS[*]}"
     fi

@@ -28,9 +28,7 @@ providers:
           - compute_instance_basic
           - artifact_repository
           - pubsub_topic
-          - service_account
           - dns_managed_zone
-          - custom_iam_role
           - secret_manager_secret
 
       composite_resource:
@@ -39,57 +37,147 @@ providers:
         max_resources: 4
 
         # Composition families for multi-resource tasks
-        # Omit 'families' to enable all available families
+        # Names must match modules.generation.terraform.providers.gcp.compositions.COMPOSITE_FAMILIES
+        # Disable any family that introduces service accounts or IAM bindings.
         families:
-          storage_analytics:
+          network_stack:
+            enabled: true
+            resources:
+              - vpc_network
+              - subnetwork
+              - firewall_rule
+              - compute_instance_networked
+
+          network_without_instance:
+            enabled: true
+            resources:
+              - vpc_network
+              - subnetwork
+              - firewall_rule
+              - compute_instance_basic
+
+          storage_delivery:
             enabled: true
             resources:
               - storage_bucket
+              - artifact_repository
               - pubsub_topic
-              - service_account
 
           artifact_delivery:
             enabled: true
             resources:
               - artifact_repository
               - storage_bucket
-              - service_account
+              - pubsub_topic
+              - storage_bucket_object
 
-          network_isolation:
+          bucket_with_object:
             enabled: true
             resources:
-              - network
+              - storage_bucket
+              - storage_bucket_object
+              - pubsub_topic
+
+          network_plus_storage:
+            enabled: true
+            resources:
+              - vpc_network
               - subnetwork
-              - firewall
-              - compute_instance_basic
+              - firewall_rule
+              - compute_instance_networked
+              - storage_bucket
+              - storage_bucket_object
+              - artifact_repository
 
-          compute_deployment:
+          network_plus_artifacts:
             enabled: true
             resources:
-              - compute_instance_basic
-              - network
-              - service_account
+              - vpc_network
+              - subnetwork
+              - firewall_rule
+              - compute_instance_networked
+              - artifact_repository
+              - storage_bucket
+              - storage_bucket_object
 
-          iam_security:
+          network_plus_pubsub:
             enabled: true
             resources:
-              - service_account
-              - custom_iam_role
-              - project_iam_member
+              - vpc_network
+              - subnetwork
+              - firewall_rule
+              - compute_instance_networked
+              - pubsub_topic
+              - storage_bucket
+              - storage_bucket_object
 
-          data_pipeline:
-            enabled: false  # Example: disabled family
+          storage_with_pubsub:
+            enabled: true
+            resources:
+              - storage_bucket
+              - pubsub_topic
+              - artifact_repository
+              - storage_bucket_object
+
+          dns_frontend:
+            enabled: true
+            resources:
+              - dns_managed_zone
+              - storage_bucket
+              - storage_bucket_object
+              - pubsub_topic
+
+          dns_network_bridge:
+            enabled: true
+            resources:
+              - dns_managed_zone
+              - vpc_network
+              - subnetwork
+              - compute_instance_networked
+              - firewall_rule
+              - storage_bucket
+
+          topic_with_subscription:
+            enabled: false
             resources:
               - pubsub_topic
               - pubsub_subscription
               - storage_bucket
 
-          serverless_app:
-            enabled: false  # Example: disabled family
+          service_account_delivery:
+            enabled: false
             resources:
-              - cloud_function
-              - pubsub_topic
+              - service_account
               - storage_bucket
+              - artifact_repository
+              - pubsub_topic
+              - storage_bucket_object
+
+          network_plus_service_account:
+            enabled: false
+            resources:
+              - vpc_network
+              - subnetwork
+              - firewall_rule
+              - compute_instance_networked
+              - service_account
+              - storage_bucket
+              - artifact_repository
+              - storage_bucket_object
+
+          bucket_object_with_iam:
+            enabled: false
+            resources:
+              - storage_bucket
+              - storage_bucket_object
+              - service_account
+              - bucket_iam_member
+
+          project_with_iam:
+            enabled: false
+            resources:
+              - service_account
+              - project_iam_member
 
   aws:
     enabled: false  # AWS support coming soon
@@ -101,9 +189,6 @@ providers:
 # GLOBAL SETTINGS
 # =============================================================================
 settings:
-  # Validator service account (can be overridden via env var)
-  validator_sa: validator@example.com
-
   # Task repository configuration
   repository:
     # Path to store generated tasks (relative to project root or absolute)
@@ -114,7 +199,7 @@ settings:
 
   # LLM instruction generation
   llm:
-    enabled: false  # Set to true to use LLM (requires OPENAI_API_KEY), false uses deterministic fallback
+    enabled: true  # Set to false to use deterministic fallback
     model: gpt-5-mini
     temperature: 0.6
     fallback_on_failure: true

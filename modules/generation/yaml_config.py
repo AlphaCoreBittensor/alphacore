@@ -60,7 +60,6 @@ class RepositoryConfig:
 @dataclass
 class SettingsConfig:
     """Global settings."""
-    validator_sa: str = "validator@example.com"
     repository: RepositoryConfig = field(default_factory=RepositoryConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
@@ -142,11 +141,7 @@ class YamlTaskConfig:
             path=repo_data.get('path', '.')
         )
 
-        settings = SettingsConfig(
-            validator_sa=settings_data.get('validator_sa', 'validator@example.com'),
-            repository=repo_config,
-            llm=llm_config
-        )
+        settings = SettingsConfig(repository=repo_config, llm=llm_config)
 
         return cls(providers=providers, settings=settings)
 

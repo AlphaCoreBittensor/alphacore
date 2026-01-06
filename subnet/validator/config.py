@@ -91,8 +91,8 @@ else:  # production
     SKIP_ROUND_AFTER_DEFAULT = 0.30
 
 # Burn mechanism (reward distribution) ------------------------------------ #
-# UID that receives burned tokens (default: UID 5)
-BURN_UID = _env_int("ALPHACORE_BURN_UID", 5)
+# UID that receives burned tokens (default: UID 0)
+BURN_UID = _env_int("ALPHACORE_BURN_UID", 0)
 # Percentage of rewards to burn (default 0.9 = 90% burn, 10% to winner)
 BURN_AMOUNT_PERCENTAGE = _env_float("ALPHACORE_BURN_AMOUNT_PERCENTAGE", 0.9)
 

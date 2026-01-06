@@ -38,7 +38,7 @@ Disable with `--no-autoupdate`, or change the interval with `--autoupdate-interv
 
 Notes:
 - The validator launcher requires `--validator-sa`, but it can be inferred from `--gcp-creds-file` if the JSON includes `client_email` (this is how the example config works).
-- If your validator uses LLM prompts, ensure `OPENAI_API_KEY`/`ALPHACORE_OPENAI_API_KEY` is available to the updater environment, or set `VALIDATOR_EXTRA_ARGS="--disable-llm"`.
+- If your validator uses LLM prompts, ensure `OPENAI_API_KEY`/`ALPHACORE_OPENAI_API_KEY` is available to the updater environment, or set `VALIDATOR_EXTRA_ARGS="--disable-llm"`. When you launch with an OpenAI key, `launch_validator.sh` writes `ALPHACORE_OPENAI_API_KEY` into the auto-update config (chmod 600).
 - `launch_validator.sh` enables an auto-update scheduler by default. Disable with `--no-autoupdate`.
 - The updater refuses to run if the working tree is dirty. Use a clean deploy clone for auto-updates.
 
