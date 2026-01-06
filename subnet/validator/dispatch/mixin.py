@@ -15,6 +15,7 @@ import bittensor as bt
 from modules.models import ACTaskSpec
 from subnet.protocol import TaskSynapse
 from subnet.validator.config import MINER_CONCURRENCY
+from subnet.validator.config import DISPATCH_PROGRESS_LOG_INTERVAL_S
 from subnet.validator.config import TASK_SYNAPSE_TIMEOUT_SECONDS
 from subnet.validator.task_ledger import TaskLedger
 
@@ -55,7 +56,10 @@ class TaskDispatchMixin:
         self._dispatcher_start = time.time()
         if targets is None:
             targets = [(uid, ax) for uid, ax in enumerate(self.metagraph.axons)]
-        bt.logging.info(f"📤 Dispatching {len(tasks)} tasks to {len(targets)} targets")
+        bt.logging.info(
+            f"📤 Dispatching {len(tasks)} tasks to {len(targets)} targets "
+            f"(timeout={TASK_SYNAPSE_TIMEOUT_SECONDS}s, concurrency={MINER_CONCURRENCY})"
+        )
         round_id = self.get_current_round_id()
         try:
             self._ledger(
@@ -98,11 +102,16 @@ class TaskDispatchMixin:
                 start = time.time()
                 try:
                     async with sem:
-                        resp = await self.dendrite(
-                            axons=[ax],
-                            synapse=synapse,
-                            deserialize=False,
-                            timeout=TASK_SYNAPSE_TIMEOUT_SECONDS,
+                        # Bound the await on our side as well; some underlying clients
+                        # may not reliably enforce the requested timeout.
+                        resp = await asyncio.wait_for(
+                            self.dendrite(
+                                axons=[ax],
+                                synapse=synapse,
+                                deserialize=False,
+                                timeout=TASK_SYNAPSE_TIMEOUT_SECONDS,
+                            ),
+                            timeout=float(TASK_SYNAPSE_TIMEOUT_SECONDS),
                         )
                     # dendrite returns a list when axons is a list
                     resp0 = resp[0] if isinstance(resp, (list, tuple)) and resp else resp
@@ -133,9 +142,43 @@ class TaskDispatchMixin:
             all_sends: List[asyncio.Task] = []
             for synapse in synapses:
                 for uid, ax in targets:
-                    all_sends.append(_send_task_to_miner(synapse, uid, ax))
-            
-            send_results = await asyncio.gather(*all_sends)
+                    all_sends.append(
+                        asyncio.create_task(
+                            _send_task_to_miner(synapse, uid, ax),
+                            name=f"dispatch:{uid}:{synapse.task_id}",
+                        )
+                    )
+
+            send_results: List[
+                Tuple[int, str, Optional[TaskSynapse], float, str, Optional[str]]
+            ] = []
+            pending = set(all_sends)
+            total_sends = len(all_sends)
+            last_progress_log_at = time.time()
+            progress_interval_s = max(1.0, float(DISPATCH_PROGRESS_LOG_INTERVAL_S))
+
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=progress_interval_s,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    try:
+                        send_results.append(task.result())
+                    except Exception as exc:
+                        # Should be rare because _send_task_to_miner returns status on error,
+                        # but guard so dispatch can't stall on an exception.
+                        name = getattr(task, "get_name", lambda: "dispatch:unknown")()
+                        bt.logging.warning(f"Dispatch task crashed ({name}): {exc}")
+
+                now = time.time()
+                if now - last_progress_log_at >= progress_interval_s:
+                    bt.logging.info(
+                        f"Dispatch progress {len(send_results)}/{total_sends} "
+                        f"(pending={len(pending)}) | elapsed={now - self._dispatcher_start:.1f}s"
+                    )
+                    last_progress_log_at = now
 
             # Process responses: uid -> task_id -> response
             responses_dict: Dict[int, Dict[str, Optional[TaskSynapse]]] = {}
@@ -163,7 +206,6 @@ class TaskDispatchMixin:
                     )
 
             dispatch_time = time.time() - self._dispatcher_start
-            total_sends = len(synapses) * len(targets)
             bt.logging.info(
                 f"✓ Task dispatch completed in {dispatch_time:.2f}s | "
                 f"Successful: {successful}/{total_sends}"

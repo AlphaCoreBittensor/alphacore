@@ -166,7 +166,7 @@ MIN_RESPONSE_RATE = _env_float("ALPHACORE_MIN_RESPONSE_RATE", 0.5)
 # Concurrency limits ------------------------------------------------------ #
 
 # Bound concurrent miner RPC calls (handshake/dispatch/feedback).
-MINER_CONCURRENCY = _env_int("ALPHACORE_MINER_CONCURRENCY", 32)
+MINER_CONCURRENCY = _env_int("ALPHACORE_MINER_CONCURRENCY", 128)
 # Bound concurrent validation API submissions.
 #
 # NOTE: The sandbox validation API instance we deploy with the validator only
@@ -251,6 +251,12 @@ STATS_EXPORT_DIR = os.getenv("ALPHACORE_STATS_EXPORT_DIR", "./logs/stats")
 VERBOSE_TASK_LOGGING = _str_to_bool(
     os.getenv("ALPHACORE_VERBOSE_TASK_LOGGING", "true" if TESTING else "false")
 )
+# While dispatching tasks with long timeouts, the validator can appear "stuck"
+# in logs (it is just awaiting miner responses). Emit periodic progress logs so
+# operators can distinguish a long-running call from a hang.
+DISPATCH_PROGRESS_LOG_INTERVAL_S = _env_float(
+    "ALPHACORE_DISPATCH_PROGRESS_LOG_INTERVAL_S", 30.0
+)
 
 # HTTP endpoint configuration ---------------------------------------------- #
 
@@ -326,6 +332,7 @@ __all__ = [
     "EXPORT_ROUND_STATS",
     "STATS_EXPORT_DIR",
     "VERBOSE_TASK_LOGGING",
+    "DISPATCH_PROGRESS_LOG_INTERVAL_S",
     "ENABLE_HTTP_ENDPOINTS",
     "HTTP_PORT",
     "HTTP_HOST",
