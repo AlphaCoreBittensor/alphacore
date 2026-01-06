@@ -64,7 +64,6 @@ DEBUG_MODE = _str_to_bool(os.getenv("ALPHACORE_DEBUG_MODE", "false"))
 # Profile-specific defaults
 if ENVIRONMENT == "local":
     ROUND_CADENCE_DEFAULT = 60  # seconds
-    TASK_TIMEOUT_DEFAULT = 30  # seconds
     ROUND_SIZE_EPOCHS_DEFAULT = 1.0
     SAFETY_BUFFER_EPOCHS_DEFAULT = 0.02
     AVG_TASK_DURATION_DEFAULT = 300
@@ -73,7 +72,6 @@ if ENVIRONMENT == "local":
     SKIP_ROUND_AFTER_DEFAULT = 0.95
 elif ENVIRONMENT == "testing":
     ROUND_CADENCE_DEFAULT = 30  # seconds
-    TASK_TIMEOUT_DEFAULT = 15  # seconds
     ROUND_SIZE_EPOCHS_DEFAULT = 0.347
     SAFETY_BUFFER_EPOCHS_DEFAULT = 0.02
     AVG_TASK_DURATION_DEFAULT = 300
@@ -82,7 +80,6 @@ elif ENVIRONMENT == "testing":
     SKIP_ROUND_AFTER_DEFAULT = 0.95
 else:  # production
     ROUND_CADENCE_DEFAULT = 600  # seconds
-    TASK_TIMEOUT_DEFAULT = 60  # seconds
     ROUND_SIZE_EPOCHS_DEFAULT = 3.0
     SAFETY_BUFFER_EPOCHS_DEFAULT = 0.5
     AVG_TASK_DURATION_DEFAULT = 150
@@ -106,9 +103,6 @@ VALIDATOR_VERSION = os.getenv("ALPHACORE_VALIDATOR_VERSION", "0.1.0")
 
 ROUND_CADENCE_SECONDS = _env_int(
     "ALPHACORE_ROUND_CADENCE_SECONDS", ROUND_CADENCE_DEFAULT
-)
-TASK_TIMEOUT_SECONDS = _env_int(
-    "ALPHACORE_TASK_TIMEOUT_SECONDS", TASK_TIMEOUT_DEFAULT
 )
 
 # Round and epoch configuration -------------------------------------------- #
@@ -205,10 +199,10 @@ MINER_RESPONSE_TIMEOUT_SECONDS = _env_int(
 #
 # Defaults:
 #   - handshake: 5s
-#   - task synapse: 3600s (1 hour)
+#   - task synapse: 1800s (30 minutes)
 HANDSHAKE_TIMEOUT_SECONDS = _env_int("ALPHACORE_HANDSHAKE_TIMEOUT_SECONDS", 5)
 TASK_SYNAPSE_TIMEOUT_SECONDS = _env_int(
-    "ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS", 3600
+    "ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS", 1800
 )
 
 # Enable latency-aware scoring where slower miners are penalized
@@ -299,7 +293,6 @@ __all__ = [
     "VALIDATOR_IMAGE",
     "VALIDATOR_VERSION",
     "ROUND_CADENCE_SECONDS",
-    "TASK_TIMEOUT_SECONDS",
     "ROUND_SIZE_EPOCHS",
     "SAFETY_BUFFER_EPOCHS",
     "AVG_TASK_DURATION_SECONDS",

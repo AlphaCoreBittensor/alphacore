@@ -34,7 +34,6 @@ from subnet.bittensor_config import config as build_config
 from subnet.validator.checkpoint.mixin import CheckpointMixin
 from subnet.validator.config import (
 	ROUND_CADENCE_SECONDS,
-	TASK_TIMEOUT_SECONDS,
 	ROUND_SIZE_EPOCHS,
 	SAFETY_BUFFER_EPOCHS,
 	SKIP_ROUND_IF_STARTED_AFTER_FRACTION,
@@ -141,7 +140,6 @@ class Validator(
 
 		# Configuration
 		self.round_cadence = ROUND_CADENCE_SECONDS
-		self.task_timeout = TASK_TIMEOUT_SECONDS
 		self.skip_round_if_started_after_fraction = SKIP_ROUND_IF_STARTED_AFTER_FRACTION
 		self.enable_checkpoint_system = ENABLE_CHECKPOINT_SYSTEM
 		self.version = "alpha-core.v2-hybrid"

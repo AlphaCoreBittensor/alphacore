@@ -43,7 +43,7 @@ ensure_rule() {
 }
 
 ensure_rule_first() {
-  # Insert a rule at the head of a chain if it is not already present.
+  # Insert a rule at the head of a chain if it is not already present
   local table="$1"; shift
   if ! iptables -t "${table}" -C "$@" 2>/dev/null; then
     iptables -t "${table}" -I "$@"
