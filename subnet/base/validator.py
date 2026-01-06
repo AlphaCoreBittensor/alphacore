@@ -325,6 +325,34 @@ class BaseValidatorNeuron(BaseNeuron):
             # Convert msg to string safely
             error_msg = str(msg) if msg else "Unknown error"
             bt.logging.error(f"set_weights failed: {error_msg}")
+            bt.logging.error(f"set_weights failure raw: result={result!r} msg={msg!r}")
+            try:
+                hotkey = getattr(getattr(self.wallet, "hotkey", None), "ss58_address", None)
+                weights_arr = None
+                if processed_weights is not None:
+                    try:
+                        weights_arr = np.asarray(processed_weights, dtype=float)
+                    except Exception:
+                        weights_arr = None
+                if weights_arr is not None and weights_arr.size:
+                    non_zero = int(np.count_nonzero(weights_arr))
+                    total = float(np.sum(weights_arr))
+                    min_w = float(np.min(weights_arr))
+                    max_w = float(np.max(weights_arr))
+                    uids_count = int(len(processed_weight_uids)) if processed_weight_uids is not None else int(weights_arr.size)
+                else:
+                    non_zero = 0
+                    total = 0.0
+                    min_w = 0.0
+                    max_w = 0.0
+                    uids_count = int(len(processed_weight_uids)) if processed_weight_uids is not None else 0
+                bt.logging.error(
+                    f"set_weights details: netuid={self.config.netuid} hotkey={hotkey} "
+                    f"uids={uids_count} nonzero={non_zero} sum={total:.6f} "
+                    f"min={min_w:.6f} max={max_w:.6f} msg={msg!r}"
+                )
+            except Exception:
+                pass
             # Record failed weight setting in report if method exists
             if hasattr(self, "_report_weights_set"):
                 self._report_weights_set(success=False)

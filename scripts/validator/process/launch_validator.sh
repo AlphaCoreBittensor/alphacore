@@ -19,6 +19,7 @@ HTTP_HOST="0.0.0.0"
 HTTP_PORT="8000"
 WALLET_PATH="${BT_WALLET_PATH:-$HOME/.bittensor/wallets}"
 VENV_DIR=""
+PM2_NAMESPACE="${PM2_NAMESPACE:-}"
 
 VALIDATOR_SA=""
 GCP_CREDS_FILE=""
@@ -38,6 +39,10 @@ EPOCH_SLOT_INDEX=""
 
 VALIDATION_API_ENABLED="true"
 VALIDATION_API_ENDPOINT=""
+
+AUTOUPDATE_ENABLED="true"
+AUTOUPDATE_INTERVAL="${ALPHACORE_AUTOUPDATE_INTERVAL:-2m}"
+
 
 usage() {
   cat <<'EOF'
@@ -63,10 +68,14 @@ Options:
   --disable-validation-api        Set ALPHACORE_VALIDATION_API_ENABLED=false
 
   --process-name NAME      Default: validator-<hotkey>-<network>
+  --pm2-namespace NAME     Default: alphacore (or env PM2_NAMESPACE)
   --env-out PATH           Default: env/<network>/validator-<wallet>-<hotkey>.env
   --http-port PORT         Default: 8000
   --wallet-path PATH       Default: ~/.bittensor/wallets
   --venv-dir PATH          Default: autodetect (../local-development/venv or ./venv)
+
+  --no-autoupdate          Do not enable the auto-update scheduler on this machine
+  --autoupdate-interval D  Auto-update interval (default: 2m)
 
   --disable-llm            Disable LLM prompt generation
   --allow-llm-fallback     Allow deterministic fallback if LLM fails
@@ -171,10 +180,14 @@ while [[ $# -gt 0 ]]; do
     --disable-validation-api) VALIDATION_API_ENABLED="false"; shift ;;
 
     --process-name) PROCESS_NAME="$2"; shift 2 ;;
+    --pm2-namespace) PM2_NAMESPACE="$2"; shift 2 ;;
     --env-out) ENV_OUT="$2"; shift 2 ;;
     --http-port) HTTP_PORT="$2"; shift 2 ;;
     --wallet-path) WALLET_PATH="$2"; shift 2 ;;
     --venv-dir) VENV_DIR="$2"; shift 2 ;;
+
+    --no-autoupdate) AUTOUPDATE_ENABLED="false"; shift ;;
+    --autoupdate-interval) AUTOUPDATE_INTERVAL="$2"; shift 2 ;;
 
     --disable-llm) ENABLE_LLM="false"; shift ;;
     --allow-llm-fallback) LLM_FALLBACK="true"; shift ;;
@@ -226,6 +239,9 @@ fi
 
 if [[ -z "$PROCESS_NAME" ]]; then
   PROCESS_NAME="validator-${WALLET_HOTKEY}-${NETWORK}"
+fi
+if [[ -z "${PM2_NAMESPACE:-}" ]]; then
+  PM2_NAMESPACE="alphacore"
 fi
 if [[ -z "$ENV_OUT" ]]; then
   ENV_OUT="$REPO_ROOT/env/${NETWORK}/validator-${WALLET_NAME}-${WALLET_HOTKEY}.env"
@@ -347,7 +363,7 @@ ALPHACORE_LOCAL_MINERS_FALLBACK="false"
 ALPHACORE_MINER_CONCURRENCY="128"
 ALPHACORE_MINER_RESPONSE_TIMEOUT_SECONDS="10"
 ALPHACORE_HANDSHAKE_TIMEOUT_SECONDS="5"
-ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS="3600"
+ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS="1800"
 ALPHACORE_DISPATCH_PROGRESS_LOG_INTERVAL_S="30"
 
 ALPHACORE_PRE_GENERATED_TASKS="0"
@@ -384,4 +400,69 @@ if [[ "$AUTO_CONFIRM" == "true" ]]; then
   LAUNCH_ARGS+=(--yes)
 fi
 
-exec bash "$REPO_ROOT/scripts/validator/process/launch_pm2.sh" "${LAUNCH_ARGS[@]}"
+PM2_NAMESPACE="$PM2_NAMESPACE" bash "$REPO_ROOT/scripts/validator/process/launch_pm2.sh" "${LAUNCH_ARGS[@]}"
+
+if [[ "$AUTOUPDATE_ENABLED" == "true" ]]; then
+  AUTOUPDATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/alphacore/autoupdate"
+  mkdir -p "$AUTOUPDATE_DIR"
+  AUTOUPDATE_CONFIG="${AUTOUPDATE_DIR}/${PM2_NAMESPACE}.env"
+
+  VALIDATOR_EXTRA_ARGS=()
+  if [[ "${LOOP_MODE:-}" == "timed" ]]; then
+    VALIDATOR_EXTRA_ARGS+=(--timed)
+  fi
+  if [[ -n "${TICK_SECONDS:-}" ]]; then
+    VALIDATOR_EXTRA_ARGS+=(--tick-seconds "$TICK_SECONDS")
+  fi
+  if [[ -n "${EPOCH_SLOTS:-}" ]]; then
+    VALIDATOR_EXTRA_ARGS+=(--epoch-slots "$EPOCH_SLOTS")
+  fi
+  if [[ -n "${EPOCH_SLOT_INDEX:-}" ]]; then
+    VALIDATOR_EXTRA_ARGS+=(--epoch-slot-index "$EPOCH_SLOT_INDEX")
+  fi
+
+  {
+    echo "NETWORK=${NETWORK}"
+    echo "PM2_NAMESPACE=${PM2_NAMESPACE}"
+    echo "WALLET_NAME=${WALLET_NAME}"
+    echo "WALLET_HOTKEY=${WALLET_HOTKEY}"
+    echo "NETUID=${NETUID}"
+    if [[ -n "${GCP_CREDS_FILE:-}" ]]; then
+      echo "GCP_CREDS_FILE=${GCP_CREDS_FILE}"
+    fi
+    if [[ -n "${VALIDATION_API_ENDPOINT:-}" ]]; then
+      echo "VALIDATION_API_ENDPOINT=${VALIDATION_API_ENDPOINT}"
+    fi
+    if [[ -n "${CHAIN_ENDPOINT:-}" ]]; then
+      echo "CHAIN_ENDPOINT=${CHAIN_ENDPOINT}"
+    fi
+    if [[ -n "${PROFILE:-}" ]]; then
+      echo "PROFILE=${PROFILE}"
+    fi
+    if [[ -n "${WALLET_PATH:-}" ]]; then
+      echo "WALLET_PATH=${WALLET_PATH}"
+    fi
+    if [[ -n "${VENV_DIR:-}" ]]; then
+      echo "VALIDATOR_VENV_DIR=${VENV_DIR}"
+    fi
+    if [[ -n "${OPENAI_API_KEY_ARG:-}" ]]; then
+      echo "ALPHACORE_OPENAI_API_KEY=${OPENAI_API_KEY_ARG}"
+    elif [[ -n "${ALPHACORE_OPENAI_API_KEY:-}" ]]; then
+      echo "ALPHACORE_OPENAI_API_KEY=${ALPHACORE_OPENAI_API_KEY}"
+    elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+      echo "ALPHACORE_OPENAI_API_KEY=${OPENAI_API_KEY}"
+    fi
+    if ((${#VALIDATOR_EXTRA_ARGS[@]} > 0)); then
+      printf 'VALIDATOR_EXTRA_ARGS="%s"\n' "${VALIDATOR_EXTRA_ARGS[*]}"
+    fi
+    echo 'VALIDATOR_ROUND_LOCKFILE=/tmp/alphacore-validator-round.lock'
+  } >"$AUTOUPDATE_CONFIG"
+  chmod 600 "$AUTOUPDATE_CONFIG" || true
+
+  bash "$REPO_ROOT/scripts/validator/process/ensure_autoupdate_timer.sh" \
+    --pm2-namespace "$PM2_NAMESPACE" \
+    --config "$AUTOUPDATE_CONFIG" \
+    --interval "$AUTOUPDATE_INTERVAL" || true
+fi
+
+exit 0

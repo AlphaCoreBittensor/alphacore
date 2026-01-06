@@ -34,7 +34,6 @@ from subnet.bittensor_config import config as build_config
 from subnet.validator.checkpoint.mixin import CheckpointMixin
 from subnet.validator.config import (
 	ROUND_CADENCE_SECONDS,
-	TASK_TIMEOUT_SECONDS,
 	ROUND_SIZE_EPOCHS,
 	SAFETY_BUFFER_EPOCHS,
 	SKIP_ROUND_IF_STARTED_AFTER_FRACTION,
@@ -141,7 +140,6 @@ class Validator(
 
 		# Configuration
 		self.round_cadence = ROUND_CADENCE_SECONDS
-		self.task_timeout = TASK_TIMEOUT_SECONDS
 		self.skip_round_if_started_after_fraction = SKIP_ROUND_IF_STARTED_AFTER_FRACTION
 		self.enable_checkpoint_system = ENABLE_CHECKPOINT_SYSTEM
 		self.version = "alpha-core.v2-hybrid"
@@ -183,6 +181,19 @@ class Validator(
 		except Exception as exc:
 			bt.logging.error(f"[startup] Validation API not ready: {exc}")
 			raise
+
+		# Round activity lockfile: written at round start and removed at round end.
+		# Used by host auto-updaters to avoid restarting the validator mid-round.
+		self._round_lockfile_path = Path(
+			os.getenv("ALPHACORE_ROUND_LOCKFILE", "/tmp/alphacore-validator-round.lock")
+		).expanduser()
+		try:
+			# A validator restart is, by definition, not mid-round. Clear any stale lockfile
+			# so auto-updaters don't wedge forever after a crash/restart.
+			if self._round_lockfile_path.exists():
+				self._round_lockfile_path.unlink()
+		except Exception:
+			pass
 
 	def _require_validation_api_healthy(self) -> None:
 		endpoint = str(VALIDATION_API_ENDPOINT or "").rstrip("/")
@@ -660,6 +671,17 @@ class Validator(
 				self._current_round_id = round_id
 			except Exception:
 				pass
+			try:
+				self._round_lockfile_path.parent.mkdir(parents=True, exist_ok=True)
+				payload = {
+					"round_id": str(round_id),
+					"block": int(current_block),
+					"ts": int(time.time()),
+					"pid": int(os.getpid()),
+				}
+				self._round_lockfile_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+			except Exception:
+				pass
 			self.round_manager.start_round(round_id=round_id, current_block=current_block)
 			round_started = True
 
@@ -820,6 +842,12 @@ class Validator(
 		finally:
 			if round_started:
 				self.round_manager.finish_round()
+			try:
+				if round_started and getattr(self, "_round_lockfile_path", None) is not None:
+					if self._round_lockfile_path.exists():
+						self._round_lockfile_path.unlink()
+			except Exception:
+				pass
 			if round_completed and round_id is not None:
 				await self._cleanup_round_state(round_id)
 

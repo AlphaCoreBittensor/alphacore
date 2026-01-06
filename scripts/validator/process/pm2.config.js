@@ -10,11 +10,13 @@ const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const startScript = path.resolve(__dirname, './start_validator_pm2.sh');
+const namespace = process.env.PM2_NAMESPACE || 'alphacore';
 
 module.exports = {
   apps: [
     {
       name: process.env.PROCESS_NAME || 'alphacore-validator',
+      namespace,
       script: startScript,
       interpreter: '/bin/bash',
       cwd: repoRoot,

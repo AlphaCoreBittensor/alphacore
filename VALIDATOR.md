@@ -131,3 +131,7 @@ bash scripts/validator/process/launch_with_validation_api.sh \
   --network <network> \
   --gcp-creds-file <path-to-gcp-creds.json>
 ```
+
+## Auto-update (origin/release)
+
+The validator launcher installs a per-user auto-update timer by default and writes a config under `~/.config/alphacore/autoupdate/`. See `scripts/validator/process/AUTOUPDATE.md` for setup, gating behavior, and testing.

@@ -12,11 +12,13 @@ const path = require('path');
 // We want the repo root.
 const repoRoot = path.resolve(__dirname, '../../../..');
 const startScript = path.resolve(__dirname, './start_validation_api_pm2.sh');
+const namespace = process.env.PM2_NAMESPACE || 'alphacore';
 
 module.exports = {
   apps: [
     {
       name: process.env.PROCESS_NAME || 'alphacore-validation-api',
+      namespace,
       script: startScript,
       interpreter: '/bin/bash',
       cwd: repoRoot,

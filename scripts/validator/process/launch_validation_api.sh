@@ -13,6 +13,8 @@ HTTP_HOST="127.0.0.1"
 HTTP_PORT="8888"
 GCP_CREDS_FILE=""
 AUTO_INSTALL_PM2="0"
+PM2_NAMESPACE="${PM2_NAMESPACE:-}"
+
 
 usage() {
   cat <<'EOF'
@@ -27,7 +29,8 @@ Required (one of):
 
 Options:
   --network NAME           Network alias used only for defaults (local|test|finney)
-  --process-name NAME      Default: alphacore-validation-api-<network>
+  --process-name NAME      Default: alphacore-validation-api
+  --pm2-namespace NAME     Default: alphacore (or env PM2_NAMESPACE)
   --env-out PATH           Default: env/<network>/validation-api.env
   --venv-dir PATH          Default: <repo>/.venv-validation-api
   --bind-host HOST         Default: 127.0.0.1
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --port) HTTP_PORT="$2"; shift 2 ;;
     --gcp-creds-file) GCP_CREDS_FILE="$2"; shift 2 ;;
     --auto-install-pm2) AUTO_INSTALL_PM2="1"; shift ;;
+    --pm2-namespace) PM2_NAMESPACE="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *)
       echo "[launch_validation_api] Unknown option: $1" >&2
@@ -78,7 +82,10 @@ if [[ -z "$VENV_DIR" ]]; then
   VENV_DIR="$REPO_ROOT/.venv-validation-api"
 fi
 if [[ -z "$PROCESS_NAME" ]]; then
-  PROCESS_NAME="alphacore-validation-api-${NETWORK}"
+  PROCESS_NAME="alphacore-validation-api"
+fi
+if [[ -z "${PM2_NAMESPACE:-}" ]]; then
+  PM2_NAMESPACE="alphacore"
 fi
 if [[ -z "$ENV_OUT" ]]; then
   ENV_OUT="$REPO_ROOT/env/${NETWORK}/validation-api.env"
@@ -118,6 +125,7 @@ if [[ ! -x "$VALIDATION_SETUP" ]]; then
 fi
 
 PROCESS_NAME="$PROCESS_NAME" \
+PM2_NAMESPACE="$PM2_NAMESPACE" \
 VENV_DIR="$VENV_DIR" \
 ENV_FILE="$ENV_OUT" \
 ALPHACORE_VALIDATION_HTTP_HOST="$HTTP_HOST" \

@@ -43,7 +43,7 @@ ensure_rule() {
 }
 
 ensure_rule_first() {
-  # Insert a rule at the head of a chain if it is not already present.
+  # Insert a rule at the head of a chain if it is not already present
   local table="$1"; shift
   if ! iptables -t "${table}" -C "$@" 2>/dev/null; then
     iptables -t "${table}" -I "$@"
@@ -105,6 +105,30 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
 
   echo "Node: $(node -v)"
   echo "npm:  $(npm -v)"
+fi
+
+########################################
+# 1a. Install PM2 and configure startup
+########################################
+if ! command -v pm2 >/dev/null 2>&1; then
+  echo "==> Installing PM2..."
+  npm install -g pm2
+  echo "PM2: $(pm2 -v)"
+else
+  echo "==> PM2 already installed, skipping."
+fi
+
+PM2_USER="${ACORE_PM2_USER:-${SUDO_USER:-}}"
+if [[ -n "${PM2_USER:-}" ]]; then
+  PM2_HOME="$(getent passwd "$PM2_USER" | cut -d: -f6 || true)"
+  if [[ -n "${PM2_HOME:-}" && -d "$PM2_HOME" ]]; then
+    echo "==> Configuring PM2 startup for user '${PM2_USER}'..."
+    env PATH="$PATH" pm2 startup systemd -u "$PM2_USER" --hp "$PM2_HOME" || true
+  else
+    echo "==> PM2 startup skipped; home not found for user '${PM2_USER}'." >&2
+  fi
+else
+  echo "==> PM2 startup skipped; set ACORE_PM2_USER to configure boot persistence." >&2
 fi
 
 ########################################
