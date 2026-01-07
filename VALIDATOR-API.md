@@ -61,8 +61,7 @@ The Validation API can mint short-lived OAuth access tokens from a service accou
 Important: the sandbox injects **only the short-lived access token** (as `GOOGLE_OAUTH_ACCESS_TOKEN`) into the microVM — it does **not** mount or copy the service account key into the guest.
 
 Best practice:
-- The validator’s GCP credentials should be dedicated to validation only.
-- Grant the minimum permissions needed to verify miner submissions in your validation project, and avoid granting unrelated roles.
+- The validator’s GCP credentials should be dedicated to validation only.  Don't attach any permissions in the validator project, miners will add IAM roles with read-only access on their environments.
 
 As new clouds/providers are added, this section will expand with equivalent “mint a short-lived token; inject only the token” patterns.
 
