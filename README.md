@@ -6,9 +6,10 @@ Today, the repo focuses on **Terraform-based tasks on Google Cloud (GCP)** valid
 
 ## Readmes
 
-- [`VALIDATOR.md`](VALIDATOR.md) — run the validator neuron (task dispatch).
-- [`VALIDATOR-API.md`](VALIDATOR-API.md) — run the Firecracker-backed sandbox Validation API (used by the validator to score miner submissions).
-- [`MINER.md`](MINER.md) — run the example miner and build your own miner entrypoint.
+- [`VALIDATOR-QUICKSTART.md`](neurons/VALIDATOR_QUICKSTART.md) — get a validator running quickly
+- [`VALIDATOR.md`](VALIDATOR.md) — information about the validator neron and task dispatch
+- [`VALIDATOR-API.md`](VALIDATOR-API.md) — information about the Firecracker-backed sandbox Validation API (used by the validator to score miner submissions).
+- [`MINER.md`](MINER.md) — run the example miner and build your own solution.
 
 ## High-Level Overview
 
