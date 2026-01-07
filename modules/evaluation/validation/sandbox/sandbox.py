@@ -101,7 +101,12 @@ class SandboxConfig:
 
     def __post_init__(self) -> None:
         if self.log_file is None:
-            self.log_file = Path(f"./firecracker-{self.id}.log")
+            log_dir = Path(os.getenv("ALPHACORE_SANDBOX_LOG_DIR", "logs/sandbox"))
+            self.log_file = log_dir / f"firecracker-{self.id}.log"
+        try:
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            sys.stderr.write(f"Warning: failed to create log dir {self.log_file.parent}: {exc}\n")
         resolved_uid, resolved_gid = resolve_firecracker_ids(self.jailer_uid, self.jailer_gid)
         self.jailer_uid, self.jailer_gid = resolved_uid, resolved_gid
 

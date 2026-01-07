@@ -1,0 +1,5 @@
+# Type Path Mode UID GID Age Argument
+e @REPO_ROOT@/logs/validation - - - 30d
+e @REPO_ROOT@/logs/sandbox - - - 30d
+e @REPO_ROOT@/logs/ledger/rounds - - - 180d
+e @REPO_ROOT@/logs/taskgen - - - 30d

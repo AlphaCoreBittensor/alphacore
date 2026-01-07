@@ -307,7 +307,7 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.warning(f"Weights: {non_zero_count} miners with non-zero weights")
 
         # Set the weights on chain via our subtensor connection.
-        result, msg = self.subtensor.set_weights(
+        response = self.subtensor.set_weights(
             wallet=self.wallet,
             netuid=self.config.netuid,
             uids=uint_uids,
@@ -316,6 +316,16 @@ class BaseValidatorNeuron(BaseNeuron):
             wait_for_inclusion=False,
             version_key=self.spec_version,
         )
+        if hasattr(response, "success"):
+            result = response.success
+            msg = response.message
+        else:
+            try:
+                result, msg = response
+            except Exception:
+                result = bool(response)
+                msg = None
+                response = None
         if result is True:
             bt.logging.info("set_weights on chain successfully!")
             # Record successful weight setting in report if method exists
@@ -326,6 +336,20 @@ class BaseValidatorNeuron(BaseNeuron):
             error_msg = str(msg) if msg else "Unknown error"
             bt.logging.error(f"set_weights failed: {error_msg}")
             bt.logging.error(f"set_weights failure raw: result={result!r} msg={msg!r}")
+            if response is not None:
+                bt.logging.error(
+                    "set_weights chain response: success=%r message=%r error=%r extrinsic_function=%r",
+                    getattr(response, "success", None),
+                    getattr(response, "message", None),
+                    getattr(response, "error", None),
+                    getattr(response, "extrinsic_function", None),
+                )
+                receipt = getattr(response, "extrinsic_receipt", None)
+                if receipt is not None:
+                    bt.logging.error("set_weights receipt: %r", receipt)
+                data = getattr(response, "data", None)
+                if data is not None:
+                    bt.logging.error("set_weights data: %r", data)
             try:
                 hotkey = getattr(getattr(self.wallet, "hotkey", None), "ss58_address", None)
                 weights_arr = None

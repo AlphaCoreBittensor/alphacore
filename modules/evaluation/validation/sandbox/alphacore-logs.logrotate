@@ -1,0 +1,11 @@
+@REPO_ROOT@/logs/pm2/*.log {
+  daily
+  rotate 30
+  maxage 30
+  size 100M
+  compress
+  delaycompress
+  missingok
+  notifempty
+  copytruncate
+}

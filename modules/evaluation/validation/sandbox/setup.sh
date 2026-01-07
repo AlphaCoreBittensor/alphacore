@@ -78,7 +78,7 @@ apt-get update -y
 apt-get install -y \
   ca-certificates curl gnupg unzip tar acl rsync debootstrap e2fsprogs \
   git python3-full python3-pip screen socat \
-  iproute2 iptables tinyproxy dnsmasq zip
+  iproute2 iptables tinyproxy dnsmasq zip logrotate
 
 # NOTE:
 # Do not install Ubuntu's `npm` package here. On many systems `nodejs` is installed
@@ -731,6 +731,29 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now alphacore-sandbox-net.service >/dev/null 2>&1 || true
+
+########################################
+# 13d. Configure log retention (logrotate + tmpfiles)
+########################################
+echo "==> Configuring logrotate + tmpfiles cleanup..."
+
+# Clean up any prior custom cleanup units (if present).
+systemctl disable --now alphacore-log-cleanup.timer >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/alphacore-log-cleanup.timer \
+  /etc/systemd/system/alphacore-log-cleanup.service \
+  /usr/local/sbin/alphacore-log-cleanup \
+  /etc/default/alphacore-log-cleanup
+
+install -m 0644 /dev/null /etc/logrotate.d/alphacore-logs
+sed "s|@REPO_ROOT@|${REPO_ROOT}|g" \
+  "${SCRIPT_DIR}/alphacore-logs.logrotate" > /etc/logrotate.d/alphacore-logs
+
+install -m 0644 /dev/null /etc/tmpfiles.d/alphacore-logs.conf
+sed "s|@REPO_ROOT@|${REPO_ROOT}|g" \
+  "${SCRIPT_DIR}/alphacore-logs.tmpfiles" > /etc/tmpfiles.d/alphacore-logs.conf
+
+systemctl daemon-reload
+systemctl enable --now systemd-tmpfiles-clean.timer >/dev/null 2>&1 || true
 
 ########################################
 # 14. Grant /dev/kvm to terraformrunner

@@ -135,3 +135,6 @@ python3 modules/evaluation/validation/sandbox/test_zip/submit_validate.py --api-
 
 - If set, `ALPHACORE_VALIDATION_ARCHIVE_ROOT` restricts `workspace_zip_path` to a single directory tree.
 - The sandbox runner is typically launched via `sudo -n` (configured by `setup.sh`) because it needs root for mounts/jailer setup.
+- Log retention is configured by `setup.sh` via logrotate (`/etc/logrotate.d/alphacore-logs`) and systemd-tmpfiles (`/etc/tmpfiles.d/alphacore-logs.conf`).
+  - Default: PM2 logs rotate daily or at 100MB, keep 30 days.
+  - Default: validation/sandbox/taskgen logs are cleaned after 30d; round summaries after 180d.

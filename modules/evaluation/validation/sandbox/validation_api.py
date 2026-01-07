@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import hashlib
@@ -85,13 +86,13 @@ def create_app() -> FastAPI:
     log_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_DIR", "./logs/validation")).resolve()
     active_log_dir = Path(os.getenv("ALPHACORE_VALIDATION_ACTIVE_LOG_DIR", str(log_dir / "active"))).resolve()
     log_by_task_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_BY_TASK_DIR", str(log_dir / "by_task"))).resolve()
+    log_by_miner_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_BY_MINER_DIR", str(log_dir / "by_miner"))).resolve()
     submissions_dir = Path(os.getenv("ALPHACORE_VALIDATION_SUBMISSIONS_DIR", str(log_dir / "submissions"))).resolve()
     submissions_by_task_dir = Path(os.getenv("ALPHACORE_VALIDATION_SUBMISSIONS_BY_TASK_DIR", str(submissions_dir / "by_task"))).resolve()
-    log_keep = int(os.getenv("ALPHACORE_VALIDATION_LOG_KEEP", "200"))
+    submissions_by_miner_dir = Path(
+        os.getenv("ALPHACORE_VALIDATION_SUBMISSIONS_BY_MINER_DIR", str(submissions_dir / "by_miner"))
+    ).resolve()
     log_tail_lines = int(os.getenv("ALPHACORE_VALIDATION_LOG_TAIL_LINES", "200"))
-    log_max_mb = int(os.getenv("ALPHACORE_VALIDATION_LOG_MAX_MB", "0"))
-    submissions_max_mb = int(os.getenv("ALPHACORE_VALIDATION_SUBMISSIONS_MAX_MB", "0"))
-    cleanup_min_interval_s = int(os.getenv("ALPHACORE_VALIDATION_CLEANUP_MIN_INTERVAL_S", "30"))
 
     token_manager = GcpAccessTokenManager(creds_file=Path(token_creds_file).resolve() if token_creds_file else None)
     queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue(maxsize=max(1, sandbox_queue_size))
@@ -100,8 +101,6 @@ def create_app() -> FastAPI:
     workers: list[asyncio.Task] = []
     running_counter = {"running": 0}
     pool_holder: dict[str, object] = {"pool": None}
-    cleanup_lock = asyncio.Lock()
-    cleanup_state = {"last_run": 0.0}
 
     def _safe_name(value: str) -> str:
         out = []
@@ -111,130 +110,6 @@ def create_app() -> FastAPI:
             else:
                 out.append("_")
         return "".join(out)[:80] or "task"
-
-    def _prune_logs() -> None:
-        if log_keep <= 0:
-            return
-        try:
-            log_dir.mkdir(parents=True, exist_ok=True)
-            active_log_dir.mkdir(parents=True, exist_ok=True)
-            active_targets: set[Path] = set()
-            for path in active_log_dir.glob("*.log"):
-                try:
-                    active_targets.add(path.resolve())
-                except OSError:
-                    continue
-            logs = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime)
-            logs = [p for p in logs if p.resolve() not in active_targets]
-            excess = len(logs) - log_keep
-            for path in logs[: max(0, excess)]:
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
-        except Exception:
-            pass
-
-    def _iter_regular_files(root: Path) -> list[Path]:
-        files: list[Path] = []
-        if not root.exists():
-            return files
-        for path in root.rglob("*"):
-            try:
-                if path.is_symlink():
-                    continue
-                if path.is_file():
-                    files.append(path)
-            except OSError:
-                continue
-        return files
-
-    def _dir_size_bytes(paths: list[Path]) -> int:
-        total = 0
-        for p in paths:
-            try:
-                total += p.stat().st_size
-            except OSError:
-                continue
-        return total
-
-    def _active_job_ids() -> set[str]:
-        return {
-            job_id
-            for job_id, record in jobs.items()
-            if record.get("status") in {"queued", "running"}
-        }
-
-    def _enforce_disk_cap(root: Path, max_bytes: int, *, protect: set[Path]) -> None:
-        if max_bytes <= 0:
-            return
-        files = _iter_regular_files(root)
-        files = [p for p in files if p.resolve() not in protect]
-        total = _dir_size_bytes(files)
-        if total <= max_bytes:
-            return
-        files.sort(key=lambda p: p.stat().st_mtime)
-        for path in files:
-            if total <= max_bytes:
-                break
-            try:
-                size = path.stat().st_size
-            except OSError:
-                size = 0
-            try:
-                path.unlink()
-                total = max(0, total - size)
-            except OSError:
-                continue
-
-    def _prune_broken_symlinks(root: Path) -> None:
-        if not root.exists():
-            return
-        for p in root.rglob("*"):
-            try:
-                if p.is_symlink() and not p.exists():
-                    p.unlink()
-            except OSError:
-                continue
-
-    async def _maybe_cleanup() -> None:
-        if cleanup_min_interval_s <= 0:
-            return
-        now = time.time()
-        if now - float(cleanup_state["last_run"]) < float(cleanup_min_interval_s):
-            return
-        async with cleanup_lock:
-            now = time.time()
-            if now - float(cleanup_state["last_run"]) < float(cleanup_min_interval_s):
-                return
-            cleanup_state["last_run"] = now
-
-            # Protect active log files and active submissions (best-effort).
-            protect_paths: set[Path] = set()
-            try:
-                for link in active_log_dir.glob("*.log"):
-                    try:
-                        protect_paths.add(link.resolve())
-                    except OSError:
-                        continue
-            except Exception:
-                pass
-            active_ids = _active_job_ids()
-            for jid in active_ids:
-                rec = jobs.get(jid, {})
-                for key in ("log_path", "submission_path"):
-                    raw = rec.get(key)
-                    if raw:
-                        try:
-                            protect_paths.add(Path(str(raw)).resolve())
-                        except OSError:
-                            pass
-
-            # Enforce caps independently.
-            _enforce_disk_cap(log_dir, int(log_max_mb) * 1024 * 1024, protect=protect_paths)
-            _enforce_disk_cap(submissions_dir, int(submissions_max_mb) * 1024 * 1024, protect=protect_paths)
-            _prune_broken_symlinks(log_by_task_dir)
-            _prune_broken_symlinks(submissions_by_task_dir)
 
     def _tail_log(path: Path, lines: int) -> str:
         try:
@@ -355,16 +230,16 @@ def create_app() -> FastAPI:
                 async with jobs_lock:
                     running_counter["running"] = max(0, int(running_counter["running"]) - 1)
                 queue.task_done()
-                await _maybe_cleanup()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         log_dir.mkdir(parents=True, exist_ok=True)
         active_log_dir.mkdir(parents=True, exist_ok=True)
         log_by_task_dir.mkdir(parents=True, exist_ok=True)
+        log_by_miner_dir.mkdir(parents=True, exist_ok=True)
         submissions_dir.mkdir(parents=True, exist_ok=True)
         submissions_by_task_dir.mkdir(parents=True, exist_ok=True)
-        _prune_logs()
+        submissions_by_miner_dir.mkdir(parents=True, exist_ok=True)
         # Fail fast: validation cannot run without a token source.
         if token_creds_file is None and not os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN"):
             raise RuntimeError("Missing ALPHACORE_GCP_CREDS_FILE (or GOOGLE_OAUTH_ACCESS_TOKEN for local testing).")
@@ -472,6 +347,8 @@ def create_app() -> FastAPI:
         request_id = uuid.uuid4().hex[:12]
         task_id_raw = request.task_json.get("task_id") if isinstance(request.task_json, dict) else None
         task_id = str(task_id_raw) if task_id_raw else None
+        miner_uid_raw = request.task_json.get("miner_uid") if isinstance(request.task_json, dict) else None
+        miner_uid = str(miner_uid_raw) if miner_uid_raw is not None else None
         invariants_count = 0
         try:
             invariants = request.task_json.get("invariants") if isinstance(request.task_json, dict) else None
@@ -519,6 +396,7 @@ def create_app() -> FastAPI:
                     {
                         "job_id": job_id,
                         "task_id": task_id,
+                        "miner_uid": miner_uid,
                         "received_at": datetime.utcnow().isoformat(),
                         "original_path": str(Path(zip_path).resolve()),
                         "stored_path": str(submission_path),
@@ -551,6 +429,31 @@ def create_app() -> FastAPI:
                 by_task_log = (log_by_task_dir / _safe_name(task_id)).resolve()
                 by_task_log.mkdir(parents=True, exist_ok=True)
                 link_log = by_task_log / f"{job_id}.log"
+                if link_log.exists() or link_log.is_symlink():
+                    link_log.unlink()
+                link_log.symlink_to(job_log_path)
+            except Exception:
+                pass
+
+        if miner_uid:
+            try:
+                by_miner = (submissions_by_miner_dir / _safe_name(miner_uid)).resolve()
+                by_miner.mkdir(parents=True, exist_ok=True)
+                link = by_miner / f"{prefix}{job_id}.zip"
+                if link.exists() or link.is_symlink():
+                    link.unlink()
+                link.symlink_to(submission_path)
+                link_meta = by_miner / f"{prefix}{job_id}.json"
+                if link_meta.exists() or link_meta.is_symlink():
+                    link_meta.unlink()
+                link_meta.symlink_to(submission_meta_path)
+            except Exception:
+                pass
+
+            try:
+                by_miner_log = (log_by_miner_dir / _safe_name(miner_uid)).resolve()
+                by_miner_log.mkdir(parents=True, exist_ok=True)
+                link_log = by_miner_log / f"{prefix}{job_id}.log"
                 if link_log.exists() or link_log.is_symlink():
                     link_log.unlink()
                 link_log.symlink_to(job_log_path)
@@ -613,8 +516,6 @@ def create_app() -> FastAPI:
 
         response.headers["X-Acore-Job-Id"] = job_id
         response.headers["X-Acore-Request-Id"] = request_id
-        _prune_logs()
-        await _maybe_cleanup()
 
         try:
             result_payload = await asyncio.wait_for(done_future, timeout=float(job_spec["timeout_s"]) + 30.0)

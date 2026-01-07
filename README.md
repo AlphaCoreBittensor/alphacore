@@ -72,4 +72,4 @@ AlphaCore is intended to expand beyond the current “Terraform + sandbox valida
 - `subnet/` — protocol + bittensor configuration + validator/miner base classes.
 - `modules/` — task generation and the sandboxed validation stack.
 - `scripts/` — operational scripts (PM2 launchers, setup helpers).
-- `logs/` — PM2 logs and validation artifacts (submissions/logs).
+- `logs/` — PM2 logs (`logs/pm2`), validation artifacts (`logs/validation`), round summaries (`logs/ledger`), sandbox Firecracker logs (`logs/sandbox`). `setup.sh` installs logrotate (`/etc/logrotate.d/alphacore-logs`) + systemd-tmpfiles (`/etc/tmpfiles.d/alphacore-logs.conf`) for retention.

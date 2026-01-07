@@ -187,6 +187,8 @@ class TaskEvaluationMixin:
                         try:
                             if "task_id" not in validation_task_json:
                                 validation_task_json["task_id"] = str(task_id)
+                            if "miner_uid" not in validation_task_json:
+                                validation_task_json["miner_uid"] = int(uid)
                             invariants = validation_task_json.get("invariants") if isinstance(validation_task_json, dict) else None
                             invariants_count = len(invariants) if isinstance(invariants, list) else 0
                         except Exception:
@@ -558,6 +560,10 @@ class TaskEvaluationMixin:
                 )
                 return None
 
+            task_payload = dict(task)
+            if "miner_uid" not in task_payload:
+                task_payload["miner_uid"] = int(uid)
+
             # Create workspace zip from bundle_dir
             workspace_zip = await self._create_workspace_zip(bundle_dir, task_id)
             if not workspace_zip:
@@ -570,7 +576,7 @@ class TaskEvaluationMixin:
                 # Submit validation request
                 validation_response = await self._validation_client.submit_validation(
                     workspace_zip_path=workspace_zip,
-                    task_json=task,
+                    task_json=task_payload,
                     task_id=task_id,
                     timeout_s=int(VALIDATION_API_TIMEOUT / 2),  # seconds - Use half of total timeout
                     net_checks=False,
