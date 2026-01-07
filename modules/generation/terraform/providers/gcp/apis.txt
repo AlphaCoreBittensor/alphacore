@@ -1,0 +1,11 @@
+serviceusage.googleapis.com
+artifactregistry.googleapis.com
+cloudresourcemanager.googleapis.com
+cloudscheduler.googleapis.com
+compute.googleapis.com
+dns.googleapis.com
+iam.googleapis.com
+logging.googleapis.com
+pubsub.googleapis.com
+secretmanager.googleapis.com
+storage.googleapis.com
