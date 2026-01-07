@@ -234,10 +234,9 @@ class Validator(
 		self._tick_seconds = max(0.25, float(self._tick_seconds))
 
 		# Epoch/round gating observability (useful when running in epoch-aware mode).
-		env_profile = (os.getenv("ALPHACORE_ENV") or "local").strip().lower()
 		self._epoch_log_enabled = self._env_flag(
 			"ALPHACORE_EPOCH_LOGGING",
-			default=(env_profile in ("testing", "test")),
+			default=True,
 		)
 		self._epoch_log_interval_s = self._env_float(
 			"ALPHACORE_EPOCH_LOG_INTERVAL_S",
