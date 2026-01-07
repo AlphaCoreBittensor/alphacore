@@ -24,12 +24,9 @@ providers:
         # Which resource types to enable for single-resource tasks
         # Omit 'resources' to enable all available resources
         resources:
-          - storage_bucket
           - compute_instance_basic
           - artifact_repository
           - pubsub_topic
-          - dns_managed_zone
-          - secret_manager_secret
 
       composite_resource:
         enabled: true
@@ -57,14 +54,14 @@ providers:
               - compute_instance_basic
 
           storage_delivery:
-            enabled: true
+            enabled: false
             resources:
               - storage_bucket
               - artifact_repository
               - pubsub_topic
 
           artifact_delivery:
-            enabled: true
+            enabled: false
             resources:
               - artifact_repository
               - storage_bucket
@@ -72,7 +69,7 @@ providers:
               - storage_bucket_object
 
           bucket_with_object:
-            enabled: true
+            enabled: false
             resources:
               - storage_bucket
               - storage_bucket_object
@@ -85,12 +82,13 @@ providers:
               - subnetwork
               - firewall_rule
               - compute_instance_networked
-              - storage_bucket
-              - storage_bucket_object
-              - artifact_repository
+              # storage_bucket and artifact_repository disabled to avoid global name collisions
+              # - storage_bucket
+              # - storage_bucket_object
+              # - artifact_repository
 
           network_plus_artifacts:
-            enabled: true
+            enabled: false
             resources:
               - vpc_network
               - subnetwork
@@ -108,11 +106,11 @@ providers:
               - firewall_rule
               - compute_instance_networked
               - pubsub_topic
-              - storage_bucket
-              - storage_bucket_object
+              # - storage_bucket
+              # - storage_bucket_object
 
           storage_with_pubsub:
-            enabled: true
+            enabled: false
             resources:
               - storage_bucket
               - pubsub_topic
@@ -120,7 +118,7 @@ providers:
               - storage_bucket_object
 
           dns_frontend:
-            enabled: true
+            enabled: false
             resources:
               - dns_managed_zone
               - storage_bucket
@@ -128,7 +126,7 @@ providers:
               - pubsub_topic
 
           dns_network_bridge:
-            enabled: true
+            enabled: false
             resources:
               - dns_managed_zone
               - vpc_network
