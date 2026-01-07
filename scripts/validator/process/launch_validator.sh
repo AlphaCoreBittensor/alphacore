@@ -89,6 +89,8 @@ Options:
   --tick-seconds SECONDS   Only with timed rounds
   --epoch-slots N          Split epoch into N windows (default: 4 on test/finney, 1 on local)
   --epoch-slot-index I     Optional explicit window index [0..N-1]
+  --validator.epoch_slots N       Alias for --epoch-slots
+  --validator.epoch_slot_index I  Alias for --epoch-slot-index
 
   --help|-h                Show this help
 EOF
@@ -201,6 +203,8 @@ while [[ $# -gt 0 ]]; do
     --tick-seconds) TICK_SECONDS="$2"; shift 2 ;;
     --epoch-slots) EPOCH_SLOTS="$2"; shift 2 ;;
     --epoch-slot-index) EPOCH_SLOT_INDEX="$2"; shift 2 ;;
+    --validator.epoch_slots) EPOCH_SLOTS="$2"; shift 2 ;;
+    --validator.epoch_slot_index) EPOCH_SLOT_INDEX="$2"; shift 2 ;;
 
     --help|-h) usage; exit 0 ;;
     *)

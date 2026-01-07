@@ -41,6 +41,7 @@ Provision an Ubuntu 22.04 VM that supports KVM (nested virtualization if applica
 ```bash
 git clone https://github.com/AlphaCoreBittensor/alphacore.git
 cd alphacore
+git checkout release
 ```
 
 ### Verify KVM Support
