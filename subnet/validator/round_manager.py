@@ -140,10 +140,8 @@ class RoundManager:
         """
         if self.current_round is not None:
             return False  # Round already in progress
-
-        # Start at epoch boundaries for better synchronization
-        blocks_until_epoch = self.get_blocks_until_next_epoch(current_block)
-        return blocks_until_epoch > self.round_duration_blocks
+        # Slot window gating is handled upstream; always allow a start here.
+        return True
 
     def transition_phase(self, new_phase: RoundPhase) -> None:
         """

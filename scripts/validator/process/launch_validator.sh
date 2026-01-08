@@ -60,7 +60,7 @@ Required:
 
 Options:
   --chain-endpoint URL     Default: inferred from --network
-  --profile NAME           local|testing|production (default: inferred from --network)
+  --profile NAME           local|testing|production (default: inferred from --network; non-local -> testing)
   --validator-sa EMAIL     Service account email to embed in tasks (required; can infer via --gcp-creds-file)
   --gcp-creds-file PATH    Optional: used only to infer --validator-sa (not required to run)
 
@@ -101,8 +101,8 @@ infer_profile() {
   case "$network" in
     local) echo "local" ;;
     test) echo "testing" ;;
-    finney) echo "production" ;;
-    *) echo "production" ;;
+    finney) echo "testing" ;;
+    *) echo "testing" ;;
   esac
 }
 

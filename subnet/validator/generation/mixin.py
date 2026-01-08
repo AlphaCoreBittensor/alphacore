@@ -158,7 +158,13 @@ class TaskGenerationMixin:
             }
             bt.logging.info(
                 "TASK_SPEC\n"
-                + json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=False)
+                + json.dumps(
+                    payload,
+                    ensure_ascii=True,
+                    indent=2,
+                    sort_keys=False,
+                    default=str,
+                )
             )
         except Exception:
             return
