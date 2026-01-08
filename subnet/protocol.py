@@ -182,6 +182,7 @@ class StartRoundSynapse(Synapse):
     version: str = Field(default="alpha-core.v1")
     round_id: str = Field(default="")  # Unique round identifier
     timestamp: int = Field(default=0)  # Unix timestamp when round started
+    validator_version: str = Field(default="")  # Validator version metadata
 
     # Miner response fields
     miner_version: str = Field(default="")  # Miner version

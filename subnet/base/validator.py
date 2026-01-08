@@ -19,6 +19,7 @@
 
 
 import copy
+import inspect
 import numpy as np
 import asyncio
 import argparse
@@ -82,6 +83,57 @@ class BaseValidatorNeuron(BaseNeuron):
         self.is_running: bool = False
         self.thread: Union[threading.Thread, None] = None
         self.lock = asyncio.Lock()
+
+    async def _close_dendrite(self, dendrite: bt.Dendrite) -> None:
+        try:
+            session = getattr(dendrite, "_session", None)
+            if session is not None:
+                try:
+                    res = session.close()
+                    if inspect.isawaitable(res):
+                        await res
+                finally:
+                    try:
+                        dendrite._session = None
+                    except Exception:
+                        pass
+                return
+            close = getattr(dendrite, "close_session", None)
+            if callable(close):
+                res = close()
+                if inspect.isawaitable(res):
+                    await res
+                return
+            close = getattr(dendrite, "close", None)
+            if callable(close):
+                res = close()
+                if inspect.isawaitable(res):
+                    await res
+        except BaseException as exc:
+            bt.logging.debug(f"Failed to close dendrite session: {exc}")
+
+    async def _dendrite_request(
+        self,
+        *,
+        axons,
+        synapse,
+        deserialize: bool = False,
+        timeout: float | int | None = None,
+    ):
+        """Send a synapse using a fresh dendrite session."""
+        dendrite = bt.Dendrite(wallet=self.wallet)
+        try:
+            resp = await dendrite(
+                axons=axons,
+                synapse=synapse,
+                deserialize=deserialize,
+                timeout=timeout,
+            )
+            if asyncio.iscoroutine(resp):
+                resp = await resp
+            return resp
+        finally:
+            await asyncio.shield(self._close_dendrite(dendrite))
 
     def serve_axon(self):
         """Serve axon to enable external connections."""

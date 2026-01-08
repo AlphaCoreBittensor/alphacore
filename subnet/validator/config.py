@@ -281,9 +281,15 @@ MOCK_VALIDATION = _str_to_bool(
     os.getenv("ALPHACORE_MOCK_VALIDATION", "true" if TESTING else "false")
 )
 
-# Checkpoint toggle (enable/disable persistence)
-ENABLE_CHECKPOINT_SYSTEM = _str_to_bool(
-    os.getenv("ALPHACORE_ENABLE_CHECKPOINT_SYSTEM", "true")
+# Weight emission timing (block offset within each epoch)
+WEIGHTS_EMIT_POLL_SECONDS = float(
+    os.getenv("ALPHACORE_WEIGHTS_EMIT_POLL_SECONDS", "12")
+)
+WEIGHTS_MIN_TASKS_BEFORE_EMIT = int(
+    os.getenv("ALPHACORE_WEIGHTS_MIN_TASKS_BEFORE_EMIT", "10")
+)
+WEIGHTS_EMIT_BLOCK_OFFSET = int(
+    os.getenv("ALPHACORE_WEIGHTS_EMIT_BLOCK_OFFSET", "0")
 )
 
 __all__ = [
@@ -330,7 +336,9 @@ __all__ = [
     "HTTP_PORT",
     "HTTP_HOST",
     "MOCK_VALIDATION",
-    "ENABLE_CHECKPOINT_SYSTEM",
+    "WEIGHTS_EMIT_POLL_SECONDS",
+    "WEIGHTS_MIN_TASKS_BEFORE_EMIT",
+    "WEIGHTS_EMIT_BLOCK_OFFSET",
     "VALIDATION_API_ENABLED",
     "VALIDATION_API_ENDPOINT",
     "VALIDATION_API_TIMEOUT",

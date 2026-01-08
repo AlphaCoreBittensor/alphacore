@@ -228,7 +228,7 @@ def add_validator_args(cls, parser):
         "--neuron.disable_set_weights",
         action="store_true",
         help="Disables setting weights.",
-        default=False,
+        default=True,
     )
 
     parser.add_argument(
@@ -236,6 +236,13 @@ def add_validator_args(cls, parser):
         type=float,
         help="Moving average alpha parameter, how much to add of the new observation.",
         default=0.1,
+    )
+
+    parser.add_argument(
+        "--validator.weights_min_tasks_before_emit",
+        type=int,
+        help="Minimum completed tasks before emitting weights.",
+        default=None,
     )
 
     parser.add_argument(

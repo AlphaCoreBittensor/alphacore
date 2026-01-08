@@ -85,7 +85,7 @@ def add_validator_args(parser: argparse.ArgumentParser) -> None:
         "--neuron.disable_set_weights",
         action="store_true",
         help="Disables setting weights.",
-        default=False,
+        default=True,
     )
 
     parser.add_argument(
@@ -99,6 +99,12 @@ def add_validator_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         help="Override which slot (0-based) this validator uses within the epoch.",
+    )
+    parser.add_argument(
+        "--validator.weights_min_tasks_before_emit",
+        type=int,
+        default=None,
+        help="Minimum completed tasks before emitting weights.",
     )
 
 

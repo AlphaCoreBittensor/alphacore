@@ -6,11 +6,10 @@ Implements the complete validator lifecycle with improved patterns from Autoppia
 2. GENERATION: Generate tasks for all miners
 3. HANDSHAKE: Verify miner liveness before dispatch (Autoppia pattern)
 4. DISPATCH: Send tasks only to active miners with retry logic
-5. EXECUTION: Wait for miner responses with checkpoints
+5. EXECUTION: Wait for miner responses
 6. EVALUATION: Compute scores and save progress
 7. FEEDBACK: Send per-task feedback for real-time learning (Autoppia pattern)
 8. FINALIZATION: Set weights based on scores
-9. RECOVERY: Resume from checkpoint if crash
 
 """
 
@@ -31,13 +30,15 @@ import numpy as np
 
 from subnet.base.validator import BaseValidatorNeuron
 from subnet.bittensor_config import config as build_config
-from subnet.validator.checkpoint.mixin import CheckpointMixin
 from subnet.validator.config import (
 	ROUND_CADENCE_SECONDS,
 	ROUND_SIZE_EPOCHS,
 	SAFETY_BUFFER_EPOCHS,
 	SKIP_ROUND_IF_STARTED_AFTER_FRACTION,
-	ENABLE_CHECKPOINT_SYSTEM,
+	WEIGHTS_EMIT_POLL_SECONDS,
+	WEIGHTS_MIN_TASKS_BEFORE_EMIT,
+	WEIGHTS_EMIT_BLOCK_OFFSET,
+	VALIDATOR_VERSION,
 )
 from subnet.validator.dispatch.mixin import TaskDispatchMixin
 from subnet.validator.evaluation.mixin import TaskEvaluationMixin
@@ -58,7 +59,6 @@ class Validator(
 	TaskEvaluationMixin,
 	HandshakeMixin,
 	FeedbackMixin,
-	CheckpointMixin,
 	SettlementMixin,
 	BaseValidatorNeuron,
 ):
@@ -69,15 +69,14 @@ class Validator(
 	1. GENERATION: Generate tasks for all miners
 	2. HANDSHAKE: Verify miner liveness (skip offline miners)
 	3. DISPATCH: Send tasks to active miners with retry logic
-	4. EXECUTION: Wait for miner responses with checkpoints
+	4. EXECUTION: Wait for miner responses
 	5. EVALUATION: Compute scores incrementally
 	6. FEEDBACK: Send per-task scores for real-time learning
 	7. FINALIZATION: Set weights based on scores
-	8. RECOVERY: Resume from checkpoint if needed
 
 	Hybrid approach combines:
 	- AlphaCore: Batch parallel dispatch, simple logic
-	- Autoppia: Handshake, feedback, checkpoints for durability
+	- Autoppia: Handshake, feedback for durability
 	"""
 
 	neuron_type: str = "AlphaCoreValidator"
@@ -141,13 +140,34 @@ class Validator(
 		# Configuration
 		self.round_cadence = ROUND_CADENCE_SECONDS
 		self.skip_round_if_started_after_fraction = SKIP_ROUND_IF_STARTED_AFTER_FRACTION
-		self.enable_checkpoint_system = ENABLE_CHECKPOINT_SYSTEM
 		self.version = "alpha-core.v2-hybrid"
+
+		self._weights_emit_poll_seconds = max(0.5, float(WEIGHTS_EMIT_POLL_SECONDS))
+		self._weights_emit_block_offset = int(WEIGHTS_EMIT_BLOCK_OFFSET)
+		self._last_weights_emit_epoch: Optional[int] = None
+		self._weights_emitter_task: Optional[asyncio.Task] = None
+		min_tasks_override = None
+		try:
+			min_tasks_override = getattr(getattr(self.config, "validator", None), "weights_min_tasks_before_emit", None)
+		except Exception:
+			min_tasks_override = None
+		if min_tasks_override is None:
+			min_tasks_override = WEIGHTS_MIN_TASKS_BEFORE_EMIT
+		self._weights_min_tasks_before_emit = max(0, int(min_tasks_override))
+		self._weights_tasks_completed = 0
+		self._weights_emitter_logged_boot = False
+		self._weights_emitter_last_epoch_logged: Optional[int] = None
+		self._timed_heartbeat_interval_seconds = self._env_float(
+			"ALPHACORE_TIMED_HEARTBEAT_SECONDS",
+			default=60.0,
+		)
+		self._timed_heartbeat_interval_seconds = max(5.0, float(self._timed_heartbeat_interval_seconds))
+		self._timed_heartbeat_task: Optional[asyncio.Task] = None
+		self._next_round_at: Optional[float] = None
 
 		bt.logging.info(f"✓ Initialized {self.neuron_type} v{self.version}")
 		bt.logging.info("  - Handshake enabled (skip offline miners)")
 		bt.logging.info("  - Feedback enabled (real-time learning)")
-		bt.logging.info("  - Checkpoints enabled (mid-round recovery)")
 
 		# Local test mode: a deterministic local harness that exercises the same
 		# validator↔miner plumbing used on mainnet, but can use fixture tasks/zips.
@@ -158,15 +178,6 @@ class Validator(
 		self._local_test_interval_seconds = max(0.25, float(self._local_test_interval_seconds))
 		self._local_test_use_taskgen_prompt = self._env_flag("ALPHACORE_LOCAL_TEST_USE_TASKGEN_PROMPT")
 		self._local_test_prompt_pipeline = None
-		# Keep rounds fast in local-dev without spamming on-chain writes.
-		# This is enforced in SettlementMixin via a minimum interval check.
-		self._weights_min_interval_seconds = self._env_float(
-			"ALPHACORE_WEIGHTS_MIN_INTERVAL_SECONDS",
-			default=(60.0 if self._local_test_enabled else 0.0),
-		)
-		self._weights_min_interval_seconds = max(0.0, float(self._weights_min_interval_seconds))
-		self._last_set_weights_at = 0.0
-
 		self._metagraph_resync_seconds = self._env_float(
 			"ALPHACORE_METAGRAPH_RESYNC_SECONDS",
 			default=(30.0 if self._local_test_enabled else 60.0),
@@ -256,7 +267,11 @@ class Validator(
 		else:
 			self._epoch_slots = max(1, int(self._env_int("ALPHACORE_EPOCH_SLOTS", default=1)))
 		try:
-			if self._epoch_slots > 1:
+			if self._loop_mode == "timed":
+				bt.logging.info(
+					f"⏱️ Timed mode enabled: tick={float(self._tick_seconds):.1f}s"
+				)
+			elif self._epoch_slots > 1:
 				slot_index = self._epoch_slot_index(self._epoch_slots)
 				window_start = float(slot_index) / float(self._epoch_slots)
 				window_end = float(slot_index + 1) / float(self._epoch_slots)
@@ -461,8 +476,12 @@ class Validator(
 		round_id = f"local-test-{int(time.time())}"
 		bt.logging.info(f"🧪 Local test: sending StartRoundSynapse to {len(axons)} miner(s)")
 
-		handshake = StartRoundSynapse(round_id=round_id, timestamp=int(time.time()))
-		handshake_resps = await self.dendrite(
+		handshake = StartRoundSynapse(
+			round_id=round_id,
+			timestamp=int(time.time()),
+			validator_version=VALIDATOR_VERSION,
+		)
+		handshake_resps = await self._dendrite_request(
 			axons=axons,
 			synapse=handshake,
 			deserialize=False,
@@ -489,7 +508,7 @@ class Validator(
 
 		bt.logging.info(f"🧪 Local test: sending TaskSynapse task_id={task_id}")
 		task_syn = TaskSynapse.from_spec(spec)
-		task_resps = await self.dendrite(
+		task_resps = await self._dendrite_request(
 			axons=axons,
 			synapse=task_syn,
 			deserialize=False,
@@ -517,7 +536,7 @@ class Validator(
 		cleanup = TaskCleanupSynapse(task_id=task_id, validation_response=validation_payload)
 
 		bt.logging.info(f"🧪 Local test: sending TaskCleanupSynapse task_id={task_id}")
-		cleanup_resps = await self.dendrite(
+		cleanup_resps = await self._dendrite_request(
 			axons=axons,
 			synapse=cleanup,
 			deserialize=False,
@@ -534,6 +553,176 @@ class Validator(
 	async def sleep(self, seconds: float) -> None:
 		await asyncio.sleep(seconds)
 
+	def _in_weights_window(self, current_block: int) -> tuple[bool, int, float]:
+		tempo = int(getattr(self.round_manager, "tempo", 0) or 0)
+		if tempo <= 0:
+			return False, 0, 0.0
+		epoch = int(current_block // tempo)
+		blocks_into = int(current_block - (epoch * tempo))
+		fraction = float(blocks_into) / float(tempo)
+		offset = int(self._weights_emit_block_offset)
+		return (blocks_into >= offset), epoch, fraction
+
+	def _maybe_emit_weights(self, current_block: int) -> None:
+		in_window, epoch, fraction = self._in_weights_window(current_block)
+		if not in_window:
+			bt.logging.info(
+				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
+				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
+				f"offset={int(self._weights_emit_block_offset)} action=skip_out_of_window"
+			)
+			return
+		if self._last_weights_emit_epoch == epoch:
+			bt.logging.info(
+				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
+				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
+				f"offset={int(self._weights_emit_block_offset)} action=skip_already_emitted"
+			)
+			return
+		if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
+			bt.logging.debug(
+				f"[WEIGHTS] Skipping emission (tasks={self._weights_tasks_completed}/{self._weights_min_tasks_before_emit})"
+			)
+			return
+		try:
+			if float(np.sum(self.scores)) <= 0.0:
+				bt.logging.debug(
+					f"[WEIGHTS] Skipping emission in window (epoch={epoch}, frac={fraction:.3f}): no non-zero scores"
+				)
+				return
+		except Exception:
+			return
+		try:
+			self._emit_top_k_weights()
+			bt.logging.info(
+				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
+				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
+				f"offset={int(self._weights_emit_block_offset)} action=emitted"
+			)
+			self._last_weights_emit_epoch = epoch
+			bt.logging.info(
+				f"✅ [WEIGHTS] Emitted weights on chain (epoch={epoch}, block_in_epoch={int(current_block - epoch * self.round_manager.tempo)})"
+			)
+		except Exception as exc:
+			bt.logging.error(f"✗ [WEIGHTS] Emission failed: {exc}")
+
+	def _emit_top_k_weights(self, k: int = 5) -> None:
+		from subnet.validator.config import BURN_AMOUNT_PERCENTAGE, BURN_UID
+
+		scores = np.asarray(self.scores, dtype=np.float32)
+		if scores.size == 0:
+			raise RuntimeError("no scores available for weight emission")
+		# Exclude burn uid from candidates
+		candidates = [i for i in range(scores.size) if i != int(BURN_UID)]
+		if not candidates:
+			raise RuntimeError("no eligible candidates for weight emission")
+		candidate_scores = scores[candidates]
+		if float(np.max(candidate_scores)) <= 0.0:
+			raise RuntimeError("all candidate scores are zero")
+
+		k = max(1, min(int(k), len(candidates)))
+		top_idx = np.argsort(candidate_scores)[-k:]
+		top_uids = [candidates[int(i)] for i in top_idx]
+
+		weights = np.zeros_like(scores, dtype=np.float32)
+		burn_pct = float(BURN_AMOUNT_PERCENTAGE)
+		burn_pct = max(0.0, min(1.0, burn_pct))
+		remaining = 1.0 - burn_pct
+		per_uid = remaining / float(len(top_uids))
+		for uid in top_uids:
+			weights[int(uid)] = per_uid
+		if 0 <= int(BURN_UID) < weights.size and burn_pct > 0.0:
+			weights[int(BURN_UID)] = burn_pct
+
+		try:
+			allocations = []
+			for uid, weight in enumerate(weights):
+				if weight > 0:
+					label = "BURN" if int(uid) == int(BURN_UID) else "UID"
+					allocations.append((float(weight), f"{label} {uid}={weight * 100:.2f}%"))
+			allocations.sort(reverse=True)
+			alloc_str = ", ".join(item for _, item in allocations)
+			bt.logging.info(f"✅ [WEIGHTS] Allocation: {alloc_str}")
+		except Exception:
+			pass
+
+		ema_scores = self.scores.copy()
+		try:
+			self.set_weights(weights)
+		finally:
+			self.scores = ema_scores
+
+	async def _weights_emitter_loop(self) -> None:
+		while not getattr(self, "should_exit", False):
+			try:
+				current_block = int(self.block)
+				tempo = int(getattr(self.round_manager, "tempo", 0) or 0)
+				if not self._weights_emitter_logged_boot:
+					bt.logging.info(
+						f"[WEIGHTS] Emitter started (offset={int(self._weights_emit_block_offset)}, "
+						f"min_tasks={int(self._weights_min_tasks_before_emit)}, "
+						f"poll={float(self._weights_emit_poll_seconds):.1f}s)"
+					)
+					self._weights_emitter_logged_boot = True
+				if tempo > 0:
+					epoch = int(current_block // tempo)
+					if self._weights_emitter_last_epoch_logged != epoch:
+						block_in_epoch = int(current_block - (epoch * tempo))
+						bt.logging.info(
+							f"[WEIGHTS] Epoch check: epoch={int(epoch)} "
+							f"block_in_epoch={int(block_in_epoch)} "
+							f"offset={int(self._weights_emit_block_offset)} "
+							f"tasks={int(self._weights_tasks_completed)}/{int(self._weights_min_tasks_before_emit)}"
+						)
+						self._weights_emitter_last_epoch_logged = epoch
+				self._maybe_emit_weights(current_block)
+			except Exception as exc:
+				bt.logging.debug(f"[WEIGHTS] Emission loop error: {exc}")
+			await asyncio.sleep(self._weights_emit_poll_seconds)
+
+	def _start_weights_emitter(self) -> None:
+		if self._weights_emitter_task is not None and not self._weights_emitter_task.done():
+			return
+		try:
+			self._weights_emitter_task = asyncio.create_task(self._weights_emitter_loop())
+		except RuntimeError:
+			# Event loop not ready yet; will retry on next forward tick.
+			self._weights_emitter_task = None
+
+	async def _timed_heartbeat_loop(self) -> None:
+		while not getattr(self, "should_exit", False):
+			try:
+				current_block = int(self.block)
+				tempo = int(getattr(self.round_manager, "tempo", 0) or 0)
+				next_in = None
+				if self._next_round_at is not None:
+					next_in = max(0.0, float(self._next_round_at - time.time()))
+				if tempo > 0:
+					epoch = int(current_block // tempo)
+					blocks_into = int(current_block - (epoch * tempo))
+					until_end = int(tempo - blocks_into)
+					bt.logging.info(
+						f"⏱️ Timed mode heartbeat: block={current_block} epoch={epoch} "
+						f"blocks_into_epoch={blocks_into} until_epoch_end={until_end} "
+						f"next_round_in={(next_in if next_in is not None else float(self._tick_seconds)):.1f}s"
+					)
+				else:
+					bt.logging.info(
+						f"⏱️ Timed mode heartbeat: block={current_block} "
+						f"next_round_in={(next_in if next_in is not None else float(self._tick_seconds)):.1f}s"
+					)
+			except Exception:
+				pass
+			await asyncio.sleep(self._timed_heartbeat_interval_seconds)
+
+	def _start_timed_heartbeat(self) -> None:
+		if self._timed_heartbeat_task is not None and not self._timed_heartbeat_task.done():
+			return
+		try:
+			self._timed_heartbeat_task = asyncio.create_task(self._timed_heartbeat_loop())
+		except RuntimeError:
+			self._timed_heartbeat_task = None
+
 	# ================================================================== #
 	# MAIN VALIDATOR LOOP - HYBRID APPROACH
 	# ================================================================== #
@@ -547,15 +736,11 @@ class Validator(
 		1. GENERATION: Create tasks with pre-generation pool
 		2. HANDSHAKE: Verify miner liveness (skip offline miners)
 		3. DISPATCH: Send tasks to active miners only
-		4. EXECUTION: Wait for responses (checkpoint progress)
+		4. EXECUTION: Wait for responses
 		5. EVALUATION: Score miners incrementally
 		6. FEEDBACK: Send per-task feedback (real-time learning)
 		7. FINALIZATION: Set weights based on scores
 
-		Recovery:
-		- Load checkpoint if validator crashed mid-round
-		- Resume from where it left off
-		- No progress loss
 		"""
 		round_started = False
 		round_completed = False
@@ -566,6 +751,9 @@ class Validator(
 		scores: Dict[int, float] = {}
 
 		try:
+			self._start_weights_emitter()
+			if self._loop_mode == "timed":
+				self._start_timed_heartbeat()
 			# Timed mode: run cycles on wall-clock cadence (local development).
 			if self._loop_mode == "timed":
 				# Timed rounds (local-dev). If local test mode is enabled, the same pipeline
@@ -573,6 +761,25 @@ class Validator(
 				async with self._local_test_lock:
 					self._local_test_ran = True
 					await self._run_round_cycle(ignore_epoch_gating=True)
+				self._next_round_at = time.time() + float(self._tick_seconds)
+				try:
+					current_block = int(self.block)
+					tempo = int(getattr(self.round_manager, "tempo", 0) or 0)
+					if tempo > 0:
+						epoch = int(current_block // tempo)
+						blocks_into = int(current_block - (epoch * tempo))
+						until_end = int(tempo - blocks_into)
+						bt.logging.info(
+							f"⏱️ Timed mode heartbeat: block={current_block} epoch={epoch} "
+							f"blocks_into_epoch={blocks_into} until_epoch_end={until_end} "
+							f"next_round_in={float(self._tick_seconds):.1f}s"
+						)
+					else:
+						bt.logging.info(
+							f"⏱️ Timed mode heartbeat: block={current_block} next_round_in={float(self._tick_seconds):.1f}s"
+						)
+				except Exception:
+					pass
 				await self.sleep(self._tick_seconds)
 				return
 
@@ -693,6 +900,31 @@ class Validator(
 			except Exception:
 				pass
 			try:
+				scores = np.asarray(self.scores, dtype=np.float32)
+				non_zero = int(np.count_nonzero(scores))
+				max_score = float(np.max(scores)) if scores.size else 0.0
+				bt.logging.info(
+					f"📊 Scores snapshot: non_zero={non_zero}/{scores.size} max={max_score:.4f}"
+				)
+				if scores.size:
+					non_zero_entries = [
+						f"{uid}={float(scores[uid]):.4f}"
+						for uid in range(int(scores.size))
+						if float(scores[uid]) != 0.0
+					]
+					zero_count = int(scores.size) - len(non_zero_entries)
+					if non_zero_entries:
+						entries = "\n".join(non_zero_entries)
+						bt.logging.info(
+							f"📊 Scores(non-zero):\n{entries}\nnum uids with zero score: {zero_count}"
+						)
+					else:
+						bt.logging.info(
+							f"📊 Scores(non-zero): none | num uids with zero score: {zero_count}"
+						)
+			except Exception:
+				pass
+			try:
 				self._round_lockfile_path.parent.mkdir(parents=True, exist_ok=True)
 				payload = {
 					"round_id": str(round_id),
@@ -799,6 +1031,10 @@ class Validator(
 
 			# Phase 5: evaluation (works for smoke zip responses)
 			scores = await self._run_consensus_phase(tasks, responses)
+			try:
+				self._weights_tasks_completed += len(tasks or [])
+			except Exception:
+				pass
 
 			# Phase 6: feedback (only for real UIDs on metagraph)
 			try:
@@ -847,11 +1083,11 @@ class Validator(
 						if isinstance(payload_to_send, dict):
 							payload_to_send.pop("tap", None)
 						cleanup = TaskCleanupSynapse(task_id=task_id, validation_response=payload_to_send)
-						await self.dendrite(axons=[axon], synapse=cleanup, deserialize=False, timeout=10)
+						await self._dendrite_request(axons=[axon], synapse=cleanup, deserialize=False, timeout=10)
 			except Exception as exc:
 				bt.logging.debug(f"Cleanup skipped/failed: {exc}")
 
-			# Phase 7: settlement (guarded by disable_set_weights)
+		# Phase 7: settlement (updates rolling scores)
 			try:
 				active_uids = [uid for uid, _ in targets if uid >= 0]
 				await self._run_settlement_phase(scores, active_uids)
@@ -873,7 +1109,7 @@ class Validator(
 				await self._cleanup_round_state(round_id)
 
 	async def _cleanup_round_state(self, round_id: str) -> None:
-		"""Clear cached data and checkpoints after a successful round."""
+		"""Clear cached data after a successful round."""
 		try:
 			from subnet.validator.round_summary import RoundSummaryWriter
 
@@ -883,10 +1119,6 @@ class Validator(
 				bt.logging.info(f"🧾 Round summary written: {written}")
 		except Exception as exc:
 			bt.logging.debug(f"Round summary skipped/failed for round {round_id}: {exc}")
-		try:
-			await self.delete_checkpoint(round_id)
-		except Exception as exc:
-			bt.logging.debug(f"Failed to delete checkpoint for round {round_id}: {exc}")
 		self.clear_round_tasks()
 		self.clear_task_responses(round_id)
 		self.clear_handshake_state(round_id)

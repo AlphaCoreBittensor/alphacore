@@ -76,7 +76,7 @@ class FeedbackMixin:
                 )
 
                 async with sem:
-                    resp = await self.dendrite(
+                    resp = await self._dendrite_request(
                         axons=[ax],
                         synapse=synapse,
                         deserialize=False,

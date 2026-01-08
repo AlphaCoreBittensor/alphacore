@@ -138,8 +138,7 @@ bash scripts/validator/process/launch_validator.sh \
   --network finney \
   --netuid 66 \
   --gcp-creds-file /path/to/alphacore/gcp-creds.json \
-  --validator.epoch_slots 4 \
-  --validator.epoch_slot_index 0 \
+  --timed --tick-seconds 1800 \
   --openai-api-key <openai-api-key>
 ```
 

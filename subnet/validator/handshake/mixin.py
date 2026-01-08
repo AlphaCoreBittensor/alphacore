@@ -20,7 +20,7 @@ from typing import Dict, Optional
 import bittensor as bt
 
 from subnet.protocol import StartRoundSynapse
-from subnet.validator.config import HANDSHAKE_TIMEOUT_SECONDS, MINER_CONCURRENCY
+from subnet.validator.config import HANDSHAKE_TIMEOUT_SECONDS, MINER_CONCURRENCY, VALIDATOR_VERSION
 from subnet.validator.task_ledger import TaskLedger
 
 
@@ -78,6 +78,7 @@ class HandshakeMixin:
         synapse = StartRoundSynapse(
             round_id=round_id,
             timestamp=int(time.time()),
+            validator_version=VALIDATOR_VERSION,
         )
 
         try:
@@ -88,7 +89,7 @@ class HandshakeMixin:
                 try:
                     async with sem:
                         resp = await asyncio.wait_for(
-                            self.dendrite(
+                            self._dendrite_request(
                                 axons=[ax],
                                 synapse=synapse,
                                 deserialize=False,

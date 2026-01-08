@@ -80,7 +80,11 @@ class Miner(BaseMinerNeuron):
         self._log_incoming(
             "StartRoundSynapse",
             synapse,
-            extra={"round_id": getattr(synapse, "round_id", ""), "timestamp": getattr(synapse, "timestamp", None)},
+            extra={
+                "round_id": getattr(synapse, "round_id", ""),
+                "timestamp": getattr(synapse, "timestamp", None),
+                "validator_version": getattr(synapse, "validator_version", ""),
+            },
         )
         synapse.miner_version = "starter"
         synapse.is_ready = True
@@ -297,8 +301,15 @@ class Miner(BaseMinerNeuron):
                 bits.append(f"score={float(score):.4f}")
         if kind == "StartRoundSynapse":
             round_id = str(extra.get("round_id") or getattr(synapse, "round_id", "") or "")
+            validator_version = str(
+                extra.get("validator_version")
+                or getattr(synapse, "validator_version", "")
+                or ""
+            )
             if round_id:
                 bits.append(f"round_id={round_id}")
+            if validator_version:
+                bits.append(f"validator_version={validator_version}")
         if kind == "TaskCleanupSynapse":
             task_id = str(extra.get("task_id") or getattr(synapse, "task_id", "") or "")
             if task_id:

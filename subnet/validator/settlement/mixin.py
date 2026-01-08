@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import bittensor as bt
 import numpy as np
-import time
 
 from subnet.validator.config import BURN_AMOUNT_PERCENTAGE, BURN_UID
 from subnet.validator.task_ledger import TaskLedger
@@ -75,7 +74,7 @@ class SettlementMixin:
             winner_score = float(scores.get(winner_uid, float("-inf")))
             if not np.isfinite(winner_score) or winner_score <= 0.0:
                 bt.logging.info(
-                    "⏭️ [SETTLEMENT] Skipping set_weights (no positive winning score among active miners)"
+                    "⏭️ [SETTLEMENT] Skipping score update (no positive winning score among active miners)"
                 )
                 return {}
 
@@ -129,83 +128,8 @@ class SettlementMixin:
             burned_weights = wta_weights
 
         # ─────────────────────────────────────────────────────────────────────
-        # Phase 3: Set weights on chain
+        # Phase 3: Update rolling scores (weights are emitted separately)
         # ─────────────────────────────────────────────────────────────────────
-
-        # Local-dev and testing may want to run rounds frequently without writing weights constantly.
-        if getattr(getattr(self, "config", None), "neuron", None) is not None:
-            if getattr(self.config.neuron, "disable_set_weights", False):
-                bt.logging.info("⏭️ [SETTLEMENT] Skipping set_weights (neuron.disable_set_weights=true)")
-                # Return the settled rewards without emitting on-chain weights.
-                settled = {
-                    uid: float(burned_weights[uid])
-                    for uid in range(len(burned_weights))
-                    if burned_weights[uid] > 0
-                }
-                try:
-                    settlement_by_round = getattr(self, "_settlement_by_round", None)
-                    if not isinstance(settlement_by_round, dict):
-                        settlement_by_round = {}
-                        setattr(self, "_settlement_by_round", settlement_by_round)
-                    settlement_by_round[str(round_id)] = {
-                        "set_weights": False,
-                        "weights": {str(int(uid)): float(w) for uid, w in settled.items()},
-                    }
-                except Exception:
-                    pass
-                try:
-                    task_ledger.write(
-                        "settlement_complete",
-                        {
-                            "round_id": round_id,
-                            "set_weights": False,
-                            "weights": {str(int(uid)): float(w) for uid, w in settled.items()},
-                        },
-                    )
-                except Exception:
-                    pass
-                return settled
-
-        # Rate-limit on-chain weight writes (useful when task rounds are much faster than epochs).
-        min_interval = float(getattr(self, "_weights_min_interval_seconds", 0.0) or 0.0)
-        if min_interval > 0:
-            last_set = float(getattr(self, "_last_set_weights_at", 0.0) or 0.0)
-            now = time.time()
-            if now - last_set < min_interval:
-                bt.logging.info(
-                    "⏭️ [SETTLEMENT] Skipping set_weights (min interval %.1fs not elapsed)",
-                    min_interval,
-                )
-                settled = {
-                    uid: float(burned_weights[uid])
-                    for uid in range(len(burned_weights))
-                    if burned_weights[uid] > 0
-                }
-                try:
-                    settlement_by_round = getattr(self, "_settlement_by_round", None)
-                    if not isinstance(settlement_by_round, dict):
-                        settlement_by_round = {}
-                        setattr(self, "_settlement_by_round", settlement_by_round)
-                    settlement_by_round[str(round_id)] = {
-                        "set_weights": False,
-                        "skipped_reason": "min_interval_not_elapsed",
-                        "weights": {str(int(uid)): float(w) for uid, w in settled.items()},
-                    }
-                except Exception:
-                    pass
-                try:
-                    task_ledger.write(
-                        "settlement_complete",
-                        {
-                            "round_id": round_id,
-                            "set_weights": False,
-                            "skipped_reason": "min_interval_not_elapsed",
-                            "weights": {str(int(uid)): float(w) for uid, w in settled.items()},
-                        },
-                    )
-                except Exception:
-                    pass
-                return settled
 
         try:
             # Normalize weights
@@ -237,16 +161,17 @@ class SettlementMixin:
                         f"(added={len(pad)}, epsilon={eps})."
                     )
 
-            # Set weights
-            self.set_weights(final_weights)
+            # Update rolling scores (EMA). Weight emission happens in a separate window.
             try:
-                self._last_set_weights_at = time.time()
-            except Exception:
-                pass
+                uids = np.arange(len(final_weights)).tolist()
+                self.update_scores(final_weights, uids)
+                bt.logging.info("✓ [SETTLEMENT] Updated rolling scores (pending weight emission)")
+            except Exception as exc:
+                bt.logging.error(f"✗ [SETTLEMENT] Failed to update rolling scores: {exc}")
 
             non_zero_count = np.count_nonzero(final_weights)
             bt.logging.info(
-                f"✓ [SETTLEMENT] Weights set on chain ({non_zero_count} non-zero)"
+                f"✓ [SETTLEMENT] Final weights computed ({non_zero_count} non-zero)"
             )
 
             # Convert to dict for return
@@ -261,7 +186,8 @@ class SettlementMixin:
                     settlement_by_round = {}
                     setattr(self, "_settlement_by_round", settlement_by_round)
                 settlement_by_round[str(round_id)] = {
-                    "set_weights": True,
+                    "set_weights": False,
+                    "pending_emission": True,
                     "non_zero_count": int(non_zero_count),
                     "weights": {str(int(uid)): float(w) for uid, w in settled_rewards.items()},
                 }
@@ -272,7 +198,8 @@ class SettlementMixin:
                     "settlement_complete",
                     {
                         "round_id": round_id,
-                        "set_weights": True,
+                        "set_weights": False,
+                        "pending_emission": True,
                         "non_zero_count": int(non_zero_count),
                         "weights": {str(int(uid)): float(w) for uid, w in settled_rewards.items()},
                     },
@@ -283,7 +210,7 @@ class SettlementMixin:
             return settled_rewards
 
         except Exception as e:
-            bt.logging.error(f"✗ [SETTLEMENT] Failed to set weights: {e}")
+            bt.logging.error(f"✗ [SETTLEMENT] Failed to finalize weights: {e}")
             return {}
 
     def get_settlement_stats(self) -> dict:

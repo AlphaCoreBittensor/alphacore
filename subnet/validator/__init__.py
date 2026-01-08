@@ -5,7 +5,6 @@ from .generation import TaskGenerationMixin
 from .dispatch import TaskDispatchMixin
 from .evaluation import TaskEvaluationMixin
 from .round_manager import RoundManager, RoundPhase, RoundState
-from .checkpoint import CheckpointManager
 from .api import create_app, run_api
 from .settlement.rewards import wta_rewards, apply_burn_mechanism
 from .finalization import set_validator_weights
@@ -17,7 +16,6 @@ __all__ = [
     "RoundManager",
     "RoundPhase",
     "RoundState",
-    "CheckpointManager",
     "create_app",
     "run_api",
     "wta_rewards",

@@ -36,6 +36,7 @@ LOOP_MODE=""
 TICK_SECONDS=""
 EPOCH_SLOTS=""
 EPOCH_SLOT_INDEX=""
+WEIGHTS_MIN_TASKS_BEFORE_EMIT=""
 
 VALIDATION_API_ENABLED="true"
 VALIDATION_API_ENDPOINT=""
@@ -85,12 +86,13 @@ Options:
   --register               Run btcli registration step (default: skipped)
   --yes                    Auto-confirm registration prompts
 
-  --timed                  Run timed rounds (ignore epoch gating)
-  --tick-seconds SECONDS   Only with timed rounds
+  --timed                  Run timed rounds (ignore epoch gating; default)
+  --tick-seconds SECONDS   Only with timed rounds (default: 1200)
   --epoch-slots N          Split epoch into N windows (default: 4 on test/finney, 1 on local)
   --epoch-slot-index I     Optional explicit window index [0..N-1]
   --validator.epoch_slots N       Alias for --epoch-slots
   --validator.epoch_slot_index I  Alias for --epoch-slot-index
+  --validator.weights_min_tasks_before_emit N  Minimum tasks before weight emission
 
   --help|-h                Show this help
 EOF
@@ -132,6 +134,17 @@ infer_validator_venv() {
     return 0
   fi
   VENV_DIR="$REPO_ROOT/venv"
+}
+
+infer_validator_version() {
+  if [[ -f "$REPO_ROOT/VERSION" ]]; then
+    VALIDATOR_VERSION="$(tr -d ' \t\r\n' <"$REPO_ROOT/VERSION")"
+    if [[ -n "$VALIDATOR_VERSION" ]]; then
+      return 0
+    fi
+  fi
+  VALIDATOR_VERSION="0.0.0"
+  echo "[launch_validator] Missing VERSION file or empty VERSION value; using ${VALIDATOR_VERSION}." >&2
 }
 
 infer_validator_sa_from_creds() {
@@ -205,6 +218,7 @@ while [[ $# -gt 0 ]]; do
     --epoch-slot-index) EPOCH_SLOT_INDEX="$2"; shift 2 ;;
     --validator.epoch_slots) EPOCH_SLOTS="$2"; shift 2 ;;
     --validator.epoch_slot_index) EPOCH_SLOT_INDEX="$2"; shift 2 ;;
+    --validator.weights_min_tasks_before_emit) WEIGHTS_MIN_TASKS_BEFORE_EMIT="$2"; shift 2 ;;
 
     --help|-h) usage; exit 0 ;;
     *)
@@ -220,9 +234,9 @@ if [[ -z "$WALLET_NAME" || -z "$WALLET_HOTKEY" || -z "$NETUID" || -z "$NETWORK" 
   exit 1
 fi
 
-# Default to epoch mode unless explicitly overridden with --timed.
+# Default to timed mode unless explicitly overridden.
 if [[ -z "${LOOP_MODE:-}" ]]; then
-  LOOP_MODE="epoch"
+  LOOP_MODE="timed"
 fi
 
 if [[ -z "$PROFILE" ]]; then
@@ -334,6 +348,7 @@ case "${PROMPT_POSTPROCESS}" in
 esac
 
 infer_validator_venv
+infer_validator_version
 
 CONFIG_PATH="$REPO_ROOT/modules/task_config.yaml"
 cat >"$ENV_OUT" <<ENVFILE
@@ -354,6 +369,7 @@ ALPHACORE_HTTP_HOST="${HTTP_HOST}"
 ALPHACORE_HTTP_PORT="${HTTP_PORT}"
 ALPHACORE_CONFIG="${CONFIG_PATH}"
 ALPHACORE_VALIDATOR_SA="${VALIDATOR_SA}"
+ALPHACORE_VALIDATOR_VERSION="${VALIDATOR_VERSION}"
 
 ALPHACORE_BT_LOGGING_LEVEL="info"
 
@@ -380,6 +396,9 @@ ENVFILE
 if [[ -n "$LOOP_MODE" ]]; then
   printf 'ALPHACORE_LOOP_MODE="%s"\n' "$LOOP_MODE" >>"$ENV_OUT"
 fi
+if [[ "$LOOP_MODE" == "timed" && -z "$TICK_SECONDS" ]]; then
+  TICK_SECONDS="1200"
+fi
 if [[ -n "$TICK_SECONDS" ]]; then
   printf 'ALPHACORE_TICK_SECONDS="%s"\n' "$TICK_SECONDS" >>"$ENV_OUT"
 fi
@@ -388,6 +407,9 @@ if [[ -n "$EPOCH_SLOTS" ]]; then
 fi
 if [[ -n "$EPOCH_SLOT_INDEX" ]]; then
   printf 'ALPHACORE_EPOCH_SLOT_INDEX="%s"\n' "$EPOCH_SLOT_INDEX" >>"$ENV_OUT"
+fi
+if [[ -n "$WEIGHTS_MIN_TASKS_BEFORE_EMIT" ]]; then
+  printf 'ALPHACORE_WEIGHTS_MIN_TASKS_BEFORE_EMIT="%s"\n' "$WEIGHTS_MIN_TASKS_BEFORE_EMIT" >>"$ENV_OUT"
 fi
 
 chmod 600 "$ENV_OUT" || true

@@ -37,12 +37,12 @@ async def send_task_synapse_to_miners(
 
     task_synapse.version = getattr(validator, "version", "alpha-core")
 
-    if validator.dendrite is None:
+    if not hasattr(validator, "_dendrite_request"):
         bt.logging.warning("Validator dendrite not initialised; returning empty responses.")
         return [None for _ in miner_axons]
 
     try:
-        responses = await validator.dendrite(
+        responses = await validator._dendrite_request(
             axons=miner_axons,
             synapse=task_synapse,
             deserialize=True,
