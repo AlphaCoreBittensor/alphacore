@@ -88,7 +88,7 @@ class HandshakeMixin:
                 try:
                     async with sem:
                         resp = await asyncio.wait_for(
-                            self.dendrite(
+                            self._dendrite_request(
                                 axons=[ax],
                                 synapse=synapse,
                                 deserialize=False,

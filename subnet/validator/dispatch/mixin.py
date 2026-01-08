@@ -105,7 +105,7 @@ class TaskDispatchMixin:
                         # Bound the await on our side as well; some underlying clients
                         # may not reliably enforce the requested timeout.
                         resp = await asyncio.wait_for(
-                            self.dendrite(
+                            self._dendrite_request(
                                 axons=[ax],
                                 synapse=synapse,
                                 deserialize=False,

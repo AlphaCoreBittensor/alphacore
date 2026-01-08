@@ -462,7 +462,7 @@ class Validator(
 		bt.logging.info(f"🧪 Local test: sending StartRoundSynapse to {len(axons)} miner(s)")
 
 		handshake = StartRoundSynapse(round_id=round_id, timestamp=int(time.time()))
-		handshake_resps = await self.dendrite(
+		handshake_resps = await self._dendrite_request(
 			axons=axons,
 			synapse=handshake,
 			deserialize=False,
@@ -489,7 +489,7 @@ class Validator(
 
 		bt.logging.info(f"🧪 Local test: sending TaskSynapse task_id={task_id}")
 		task_syn = TaskSynapse.from_spec(spec)
-		task_resps = await self.dendrite(
+		task_resps = await self._dendrite_request(
 			axons=axons,
 			synapse=task_syn,
 			deserialize=False,
@@ -517,7 +517,7 @@ class Validator(
 		cleanup = TaskCleanupSynapse(task_id=task_id, validation_response=validation_payload)
 
 		bt.logging.info(f"🧪 Local test: sending TaskCleanupSynapse task_id={task_id}")
-		cleanup_resps = await self.dendrite(
+		cleanup_resps = await self._dendrite_request(
 			axons=axons,
 			synapse=cleanup,
 			deserialize=False,
@@ -847,7 +847,7 @@ class Validator(
 						if isinstance(payload_to_send, dict):
 							payload_to_send.pop("tap", None)
 						cleanup = TaskCleanupSynapse(task_id=task_id, validation_response=payload_to_send)
-						await self.dendrite(axons=[axon], synapse=cleanup, deserialize=False, timeout=10)
+						await self._dendrite_request(axons=[axon], synapse=cleanup, deserialize=False, timeout=10)
 			except Exception as exc:
 				bt.logging.debug(f"Cleanup skipped/failed: {exc}")
 
