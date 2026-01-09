@@ -75,11 +75,13 @@ class HandshakeMixin:
                     f"(hotkey={str(getattr(ax, 'hotkey', ''))[:20]})"
                 )
 
+        validator_version = VALIDATOR_VERSION or "unknown"
         synapse = StartRoundSynapse(
             round_id=round_id,
             timestamp=int(time.time()),
-            validator_version=VALIDATOR_VERSION,
+            validator_version=validator_version,
         )
+        bt.logging.info(f"🤝 Handshake: validator_version={validator_version} round={round_id}")
 
         try:
             # Send handshake to all miners

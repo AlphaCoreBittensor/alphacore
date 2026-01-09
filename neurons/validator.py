@@ -120,6 +120,7 @@ class Validator(
 
 		# Initialize round management with epoch-based timing
 		bt.logging.info(f"Validator init: subtensor={getattr(self, 'subtensor', 'NOT SET')}")
+		bt.logging.info(f"Validator version: {VALIDATOR_VERSION}")
 
 		# Get tempo - it's a method that needs netuid parameter
 		tempo = DEFAULT_TEMPO

@@ -308,8 +308,7 @@ class Miner(BaseMinerNeuron):
             )
             if round_id:
                 bits.append(f"round_id={round_id}")
-            if validator_version:
-                bits.append(f"validator_version={validator_version}")
+            bits.append(f"validator_version={validator_version or 'unknown'}")
         if kind == "TaskCleanupSynapse":
             task_id = str(extra.get("task_id") or getattr(synapse, "task_id", "") or "")
             if task_id:
