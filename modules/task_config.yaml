@@ -76,7 +76,7 @@ providers:
               - pubsub_topic
 
           network_plus_storage:
-            enabled: true
+            enabled: false
             resources:
               - vpc_network
               - subnetwork
@@ -99,7 +99,7 @@ providers:
               - storage_bucket_object
 
           network_plus_pubsub:
-            enabled: true
+            enabled: false
             resources:
               - vpc_network
               - subnetwork
