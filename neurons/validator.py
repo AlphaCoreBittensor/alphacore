@@ -121,6 +121,7 @@ class Validator(
 		# Initialize round management with epoch-based timing
 		bt.logging.info(f"Validator init: subtensor={getattr(self, 'subtensor', 'NOT SET')}")
 		bt.logging.info(f"Validator version: {VALIDATOR_VERSION}")
+		self._log_host_environment()
 
 		# Get tempo - it's a method that needs netuid parameter
 		tempo = DEFAULT_TEMPO
@@ -622,6 +623,31 @@ class Validator(
 			self.set_weights(weights)
 		finally:
 			self.scores = ema_scores
+
+	def _log_host_environment(self) -> None:
+		try:
+			uname = os.uname()
+			bt.logging.info(
+				f"Host OS: {uname.sysname} {uname.release} {uname.version} {uname.machine}"
+			)
+		except Exception as exc:
+			bt.logging.debug(f"Host OS lookup failed: {exc}")
+
+		try:
+			version_text = Path("/proc/version").read_text(encoding="utf-8", errors="replace")
+			if "microsoft" in version_text.lower():
+				bt.logging.warning("Host OS appears to be WSL; KVM/Firecracker may be unavailable.")
+		except Exception:
+			pass
+
+		kvm_path = Path("/dev/kvm")
+		if kvm_path.exists():
+			if os.access(kvm_path, os.R_OK | os.W_OK):
+				bt.logging.info("KVM: /dev/kvm present and accessible")
+			else:
+				bt.logging.warning("KVM: /dev/kvm present but not accessible (check permissions)")
+		else:
+			bt.logging.warning("KVM: /dev/kvm not found (virtualization disabled/unavailable)")
 
 	def _emit_top_k_weights(self, k: int = 5) -> None:
 		from subnet.validator.config import BURN_AMOUNT_PERCENTAGE, BURN_UID
