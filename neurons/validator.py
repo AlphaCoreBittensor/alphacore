@@ -582,18 +582,15 @@ class Validator(
 			return
 		try:
 			if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
-				self._emit_burn_only_weights(
-					reason=f"tasks {self._weights_tasks_completed}/{self._weights_min_tasks_before_emit}"
-				)
+				return
+			try:
+				total_score = float(np.sum(self.scores))
+			except Exception:
+				total_score = 0.0
+			if total_score <= 0.0:
+				self._emit_burn_only_weights(reason="no non-zero scores")
 			else:
-				try:
-					total_score = float(np.sum(self.scores))
-				except Exception:
-					total_score = 0.0
-				if total_score <= 0.0:
-					self._emit_burn_only_weights(reason="no non-zero scores")
-				else:
-					self._emit_top_k_weights()
+				self._emit_top_k_weights()
 			bt.logging.info(
 				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
 				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
@@ -695,6 +692,27 @@ class Validator(
 				if tempo > 0:
 					epoch = int(current_block // tempo)
 					if self._weights_emitter_last_epoch_logged != epoch:
+						try:
+							last_update = int(self.metagraph.last_update[self.uid])
+						except Exception:
+							last_update = None
+						if last_update is not None:
+							blocks_since = max(0, int(current_block - last_update))
+							bt.logging.info(
+								f"[WEIGHTS] Last set at block={last_update} "
+								f"(current={current_block}, delta={blocks_since})"
+							)
+							if blocks_since > 4000:
+								try:
+									self._emit_burn_only_weights(reason=f"stale weights {blocks_since} blocks")
+								except Exception as exc:
+									bt.logging.warning(
+										f"[WEIGHTS] Stale burn-only emit failed: {exc}"
+									)
+						else:
+							bt.logging.warning(
+								"[WEIGHTS] Last set block unknown (metagraph last_update unavailable)"
+							)
 						block_in_epoch = int(current_block - (epoch * tempo))
 						bt.logging.info(
 							f"[WEIGHTS] Epoch check: epoch={int(epoch)} "

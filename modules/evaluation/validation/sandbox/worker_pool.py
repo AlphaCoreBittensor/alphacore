@@ -106,9 +106,6 @@ class SandboxWorkerPool:
         cmd: list[str] = []
         if self._use_sudo:
             cmd.extend([str(self._sudo_bin), "-n"])
-            if job.env:
-                preserved = ",".join(sorted(job.env.keys()))
-                cmd.append(f"--preserve-env={preserved}")
         cmd.extend(
             [
                 str(self._python),
