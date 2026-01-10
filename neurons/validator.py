@@ -580,21 +580,20 @@ class Validator(
 				f"offset={int(self._weights_emit_block_offset)} action=skip_already_emitted"
 			)
 			return
-		if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
-			bt.logging.debug(
-				f"[WEIGHTS] Skipping emission (tasks={self._weights_tasks_completed}/{self._weights_min_tasks_before_emit})"
-			)
-			return
 		try:
-			if float(np.sum(self.scores)) <= 0.0:
-				bt.logging.debug(
-					f"[WEIGHTS] Skipping emission in window (epoch={epoch}, frac={fraction:.3f}): no non-zero scores"
+			if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
+				self._emit_burn_only_weights(
+					reason=f"tasks {self._weights_tasks_completed}/{self._weights_min_tasks_before_emit}"
 				)
-				return
-		except Exception:
-			return
-		try:
-			self._emit_top_k_weights()
+			else:
+				try:
+					total_score = float(np.sum(self.scores))
+				except Exception:
+					total_score = 0.0
+				if total_score <= 0.0:
+					self._emit_burn_only_weights(reason="no non-zero scores")
+				else:
+					self._emit_top_k_weights()
 			bt.logging.info(
 				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
 				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
@@ -606,6 +605,26 @@ class Validator(
 			)
 		except Exception as exc:
 			bt.logging.error(f"✗ [WEIGHTS] Emission failed: {exc}")
+
+	def _emit_burn_only_weights(self, reason: str) -> None:
+		from subnet.validator.config import BURN_UID
+
+		scores = np.asarray(self.scores, dtype=np.float32)
+		n = int(getattr(self.metagraph, "n", 0) or scores.size)
+		if n <= 0:
+			raise RuntimeError("no metagraph available for burn-only weights")
+		weights = np.zeros(n, dtype=np.float32)
+		burn_uid = int(BURN_UID)
+		if burn_uid < 0 or burn_uid >= n:
+			raise RuntimeError(f"burn uid out of range for weights: {burn_uid}")
+		weights[burn_uid] = 1.0
+		bt.logging.info(f"✅ [WEIGHTS] Burn-only allocation (uid={burn_uid}) reason={reason}")
+
+		ema_scores = self.scores.copy()
+		try:
+			self.set_weights(weights)
+		finally:
+			self.scores = ema_scores
 
 	def _emit_top_k_weights(self, k: int = 5) -> None:
 		from subnet.validator.config import BURN_AMOUNT_PERCENTAGE, BURN_UID

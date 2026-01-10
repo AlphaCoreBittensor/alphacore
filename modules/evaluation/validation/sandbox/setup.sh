@@ -697,12 +697,13 @@ sysctl -w "net.ipv6.conf.${BR_NAME}.disable_ipv6=1" >/dev/null 2>&1 || true
 echo "==> Installing sudoers rule for sandbox runner..."
 TAP_OWNER_USER="$(id -nu "${TAP_OWNER_UID}" 2>/dev/null || true)"
 if [ -n "${TAP_OWNER_USER}" ]; then
-  cat > /etc/sudoers.d/alphacore-sandbox-runner <<'EOF'
+cat > /etc/sudoers.d/alphacore-sandbox-runner <<'EOF'
 # Allow the sandbox runner to execute via sudo without a password (needed for non-interactive supervisors).
 # The worker pool invokes: sudo -n --preserve-env=GOOGLE_OAUTH_ACCESS_TOKEN /usr/bin/python3 .../sandbox.py ...
 #
 # NOTE: the sandbox runner needs root for mounts/jailer setup, but it refuses to start Firecracker as uid=0.
 EOF
+  echo "Defaults:${TAP_OWNER_USER} env_keep += \"GOOGLE_OAUTH_ACCESS_TOKEN\"" >> /etc/sudoers.d/alphacore-sandbox-runner
   echo "${TAP_OWNER_USER} ALL=(root) NOPASSWD: /usr/bin/python3 *modules/evaluation/validation/sandbox/sandbox.py *" >> /etc/sudoers.d/alphacore-sandbox-runner
   chmod 440 /etc/sudoers.d/alphacore-sandbox-runner
 else
