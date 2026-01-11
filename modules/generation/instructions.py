@@ -907,7 +907,7 @@ class TaskInstructionGenerator:
 
     def _fallback_instructions(self, task: TerraformTask) -> str:
         submission_details = self._format_submission_details(task)
-        requirements_summary = self._summarize_invariants(task.spec.invariants)
+        requirements_summary = self._format_invariants(task.spec.invariants)
         kind_description = self._describe_kind(task.spec.kind)
         metadata = task.spec.metadata or {}
         hints = metadata.get("hints") or []
@@ -1120,10 +1120,26 @@ class TaskInstructionGenerator:
                     return raw.lower()
                 return value
 
-            fields = ", ".join(
-                f"{TaskInstructionGenerator._humanize_field(k)} equals {json.dumps(_display_value(v), ensure_ascii=True)}"
-                for k, v in shuffled_fields
-            )
+            field_strs = []
+            for k, v in shuffled_fields:
+                # Check if this field has a special comparison rule
+                rule = invariant.comparison_rule.get(k, "exact_match")
+                humanized = TaskInstructionGenerator._humanize_field(k)
+
+                if rule == "starts_with":
+                    field_strs.append(
+                        f"{humanized} starts with {json.dumps(_display_value(v), ensure_ascii=True)}"
+                    )
+                elif rule == "ends_with":
+                    field_strs.append(
+                        f"{humanized} ends with {json.dumps(_display_value(v), ensure_ascii=True)}"
+                    )
+                else:  # exact_match
+                    field_strs.append(
+                        f"{humanized} equals {json.dumps(_display_value(v), ensure_ascii=True)}"
+                    )
+
+            fields = ", ".join(field_strs)
             lines.append(fields)
         return "\n".join(lines) if lines else "No requirement details provided."
 

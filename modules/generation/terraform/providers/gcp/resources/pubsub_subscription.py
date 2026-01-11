@@ -47,5 +47,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_subscription,
             base_hints=("Keep the subscription minimal with short ack deadline.",),
             weight=0.9,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

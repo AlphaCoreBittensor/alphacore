@@ -58,5 +58,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_firewall,
             base_hints=("Restrict ingress on the bespoke VPC.",),
             weight=0.8,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

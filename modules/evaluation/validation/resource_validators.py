@@ -15,6 +15,32 @@ def _as_str(value: Any) -> str | None:
     return str(value)
 
 
+def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
+    """
+    Apply the specified comparison rule to validate a field.
+
+    Args:
+        actual: Actual value from state file
+        expected: Expected value from invariant
+        rule: Comparison rule (exact_match, starts_with, ends_with)
+
+    Returns:
+        True if the comparison passes, False otherwise
+    """
+    actual_str = _as_str(actual)
+    expected_str = _as_str(expected)
+
+    if not actual_str or not expected_str:
+        return actual == expected
+
+    if rule == "starts_with":
+        return actual_str.startswith(expected_str)
+    elif rule == "ends_with":
+        return actual_str.endswith(expected_str)
+    else:  # exact_match (default)
+        return actual_str == expected_str
+
+
 def _matches_ref(actual: Any, expected: Any) -> bool:
     """
     Match a Terraform reference-like attribute.
@@ -43,10 +69,10 @@ def _default_validate(
     parser: TerraformStateParser,
 ) -> InvariantValidation:
     """
-    Default validation: exact string matching for all fields.
+    Default validation: supports exact, starts_with, and ends_with matching for fields.
 
     Args:
-        invariant: The invariant to validate
+        invariant: The invariant to validate (with optional comparison_rule)
         resource: Resource from Terraform state
         parser: State parser for accessing attributes
 
@@ -64,11 +90,26 @@ def _default_validate(
         actual_value = parser.get_resource_attribute(resource, path)
         result.actual_values[path] = actual_value
 
-        if actual_value != expected_value:
+        # Get comparison rule for this field (default to exact_match)
+        rule = invariant.comparison_rule.get(path, "exact_match")
+
+        # Apply the appropriate comparison
+        matches = _apply_comparison_rule(actual_value, expected_value, rule)
+
+        if not matches:
             result.passed = False
-            result.errors.append(
-                f"{path}: expected '{expected_value}', got '{actual_value}'"
-            )
+            if rule == "starts_with":
+                result.errors.append(
+                    f"{path}: expected to start with '{expected_value}', got '{actual_value}'"
+                )
+            elif rule == "ends_with":
+                result.errors.append(
+                    f"{path}: expected to end with '{expected_value}', got '{actual_value}'"
+                )
+            else:
+                result.errors.append(
+                    f"{path}: expected '{expected_value}', got '{actual_value}'"
+                )
 
     return result
 

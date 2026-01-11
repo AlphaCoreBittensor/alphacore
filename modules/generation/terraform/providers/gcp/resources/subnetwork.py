@@ -44,5 +44,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_subnetwork,
             base_hints=("Attach the subnetwork to the custom VPC.",),
             weight=1.0,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

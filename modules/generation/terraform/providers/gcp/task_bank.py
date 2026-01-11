@@ -232,20 +232,34 @@ class GCPDynamicTaskBank:
     def _realise_templates(
         self, order: List[str], task_id: str, nonce: str, validator_sa: str
     ) -> Tuple[List[Invariant], List[str]]:
+        from modules.generation.terraform.resource_templates import pick_naming_rule
+
         shared_state: Dict[str, Dict[str, Any]] = {}
         invariants: List[Invariant] = []
         hints: List[str] = []
         for key in order:
             template = self.templates[key]
             scoped_seed = f"{task_id}:{nonce}:{key}"
+            ctx_rng = random.Random(scoped_seed)
             ctx = TemplateContext(
-                rng=random.Random(scoped_seed),
+                rng=ctx_rng,
                 task_id=task_id,
                 nonce=nonce,
                 shared=shared_state,
                 validator_sa=validator_sa,
             )
             instance: ResourceInstance = template.builder(ctx)
+
+            # Apply naming rules to invariants based on template configuration
+            for invariant in instance.invariants:
+                # Pick a naming rule for name fields based on template's allowed rules
+                name_field = "values.name"
+                if name_field in invariant.match and template.naming_rules:
+                    # Use the same RNG for deterministic rule selection
+                    rule = pick_naming_rule(template, ctx_rng)
+                    if rule != "exact_match":
+                        invariant.comparison_rule[name_field] = rule
+
             invariants.extend(instance.invariants)
             hints.extend(template.base_hints)
             hints.extend(instance.prompt_hints)

@@ -93,16 +93,27 @@ class ACScore:
 class Invariant:
     """
     A single check the validator will perform against the refreshed Terraform state.
+
+    For fields requiring flexible matching (e.g., globally unique names),
+    use comparison_rule to specify how to validate the field value.
+
     Example:
       resource_type = "google_compute_instance"
       match = {
         "values.name": "minimal-vm",
         "values.zone": "us-central1-a",
       }
+      comparison_rule = {"values.name": "exact_match"}  # Optional, defaults to exact_match
+
+    Comparison rules:
+      - exact_match: Field must equal the value exactly
+      - starts_with: Field must start with the value
+      - ends_with: Field must end with the value
     """
 
     resource_type: str
     match: Dict[str, Any]
+    comparison_rule: Dict[str, str] = field(default_factory=dict)  # field -> rule (exact_match, starts_with, ends_with)
 
 
 @dataclass
