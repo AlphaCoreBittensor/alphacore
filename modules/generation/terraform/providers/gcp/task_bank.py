@@ -252,13 +252,25 @@ class GCPDynamicTaskBank:
 
             # Apply naming rules to invariants based on template configuration
             for invariant in instance.invariants:
-                # Pick a naming rule for name fields based on template's allowed rules
-                name_field = "values.name"
-                if name_field in invariant.match and template.naming_rules:
-                    # Use the same RNG for deterministic rule selection
-                    rule = pick_naming_rule(template, ctx_rng)
-                    if rule != "exact_match":
+                if not template.naming_rules:
+                    continue
+
+                # Pick a naming rule for name/identifier fields
+                # Common patterns: values.name, values.repository_id, values.secret_id, etc.
+                name_fields = [
+                    "values.name",
+                    "values.repository_id",
+                    "values.secret_id",
+                    "values.service_account_id"
+                ]
+
+                for name_field in name_fields:
+                    if name_field in invariant.match:
+                        # Use the same RNG for deterministic rule selection
+                        rule = pick_naming_rule(template, ctx_rng)
+                        # Always set the rule explicitly for clarity (even if exact_match)
                         invariant.comparison_rule[name_field] = rule
+                        break  # Only apply to first matching field
 
             invariants.extend(instance.invariants)
             hints.extend(template.base_hints)
