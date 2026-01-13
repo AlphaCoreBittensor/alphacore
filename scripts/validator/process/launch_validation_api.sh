@@ -10,7 +10,6 @@ if [[ "$(id -u)" -eq 0 ]]; then
   exit 1
 fi
 
-NETWORK=""
 PROCESS_NAME=""
 ENV_OUT=""
 VENV_DIR=""
@@ -26,14 +25,13 @@ usage() {
 Launch the sandbox Validation API under PM2.
 
 Usage:
-  bash scripts/validator/process/launch_validation_api.sh --network NETWORK --gcp-creds-file /path/key.json [options]
+  bash scripts/validator/process/launch_validation_api.sh --gcp-creds-file /path/key.json [options]
 
 Required (one of):
   --gcp-creds-file PATH    Service account JSON key for token minting
   OR set GOOGLE_OAUTH_ACCESS_TOKEN in the environment
 
 Options:
-  --network NAME           Network alias used only for defaults (local|test|finney)
   --process-name NAME      Default: alphacore-validation-api
   --pm2-namespace NAME     Default: alphacore (or env PM2_NAMESPACE)
   --env-out PATH           Default: env/<network>/validation-api.env
@@ -51,7 +49,6 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --network) NETWORK="$2"; shift 2 ;;
     --process-name) PROCESS_NAME="$2"; shift 2 ;;
     --env-out) ENV_OUT="$2"; shift 2 ;;
     --venv-dir) VENV_DIR="$2"; shift 2 ;;
@@ -67,12 +64,6 @@ while [[ $# -gt 0 ]]; do
       exit 1 ;;
   esac
 done
-
-if [[ -z "${NETWORK:-}" ]]; then
-  echo "[launch_validation_api] Missing required: --network (used for default paths/names)" >&2
-  usage
-  exit 1
-fi
 
 if [[ -z "$GCP_CREDS_FILE" && -z "${GOOGLE_OAUTH_ACCESS_TOKEN:-}" ]]; then
   echo "[launch_validation_api] Missing auth: pass --gcp-creds-file or set GOOGLE_OAUTH_ACCESS_TOKEN" >&2
@@ -93,7 +84,7 @@ if [[ -z "${PM2_NAMESPACE:-}" ]]; then
   PM2_NAMESPACE="alphacore"
 fi
 if [[ -z "$ENV_OUT" ]]; then
-  ENV_OUT="$REPO_ROOT/env/${NETWORK}/validation-api.env"
+  ENV_OUT="$REPO_ROOT/env/validation-api.env"
 fi
 mkdir -p "$(dirname "$ENV_OUT")"
 
