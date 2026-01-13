@@ -522,31 +522,13 @@ DHCP_START="${ACORE_DHCP_START:-172.16.0.100}"
 DHCP_END="${ACORE_DHCP_END:-172.16.0.199}"
 DHCP_LEASE="12h"
 PROXY_PORT="8888"
-resolve_uid_gid() {
-  local user="$1"
-  local uid gid
-  uid="$(id -u "$user" 2>/dev/null || true)"
-  gid="$(id -g "$user" 2>/dev/null || true)"
-  if [[ -n "${uid:-}" && -n "${gid:-}" ]]; then
-    echo "${uid}:${gid}"
-    return 0
-  fi
-  return 1
-}
 
-if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
-  TAP_OWNER_UID="${SUDO_UID}"
-  TAP_OWNER_GID="${SUDO_GID}"
-elif resolve_uid_gid ubuntu >/dev/null; then
-  TAP_OWNER_UID="${TAP_OWNER_UID:-${SUDO_UID:-$(resolve_uid_gid ubuntu | cut -d: -f1)}}"
-  TAP_OWNER_GID="${TAP_OWNER_GID:-${SUDO_GID:-$(resolve_uid_gid ubuntu | cut -d: -f2)}}"
-elif resolve_uid_gid "${TERRAFORM_USER}" >/dev/null; then
-  TAP_OWNER_UID="${TAP_OWNER_UID:-${SUDO_UID:-$(resolve_uid_gid "${TERRAFORM_USER}" | cut -d: -f1)}}"
-  TAP_OWNER_GID="${TAP_OWNER_GID:-${SUDO_GID:-$(resolve_uid_gid "${TERRAFORM_USER}" | cut -d: -f2)}}"
-else
-  TAP_OWNER_UID="${TAP_OWNER_UID:-$(id -u)}"
-  TAP_OWNER_GID="${TAP_OWNER_GID:-$(id -g)}"
+if [[ -z "${SUDO_UID:-}" || -z "${SUDO_GID:-}" ]]; then
+  echo "[acore-net] ERROR: missing SUDO_UID/SUDO_GID; run setup.sh via sudo from the target user." >&2
+  exit 1
 fi
+TAP_OWNER_UID="${SUDO_UID}"
+TAP_OWNER_GID="${SUDO_GID}"
 
 # Detect default egress interface (used by proxy, not by TAP)
 EGRESS_IFACE="$(ip route get 8.8.8.8 2>/dev/null \

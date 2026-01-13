@@ -188,7 +188,13 @@ main() {
   VALIDATION_API_ENDPOINT="${VALIDATION_API_ENDPOINT:-http://127.0.0.1:8888}"
 
   # Concurrency guard (avoid multiple overlapping updaters).
-  local lock_path="${AUTOUPDATE_LOCKFILE:-/tmp/alphacore-autoupdate-${PM2_NAMESPACE}.lock}"
+  local legacy_lock="/tmp/alphacore-autoupdate-${PM2_NAMESPACE}.lock"
+  if [[ -e "$legacy_lock" ]]; then
+    rm -f "$legacy_lock" 2>/dev/null || warn "Could not remove legacy lock at $legacy_lock"
+  fi
+  local lock_dir="${XDG_STATE_HOME:-$HOME/.local/state}/alphacore/autoupdate"
+  mkdir -p "$lock_dir"
+  local lock_path="${AUTOUPDATE_LOCKFILE:-$lock_dir/${PM2_NAMESPACE}.lock}"
   exec 9>"$lock_path"
   if ! flock -n 9; then
     log "Another updater is running (lock: $lock_path); exiting."

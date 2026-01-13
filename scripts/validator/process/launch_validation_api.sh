@@ -5,6 +5,11 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "[launch_validation_api] Refusing to run as root. Run as a non-root user." >&2
+  exit 1
+fi
+
 NETWORK=""
 PROCESS_NAME=""
 ENV_OUT=""

@@ -5,6 +5,11 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "[launch_validator] Refusing to run as root. Run as a non-root user." >&2
+  exit 1
+fi
+
 WALLET_NAME=""
 WALLET_HOTKEY=""
 NETUID=""
@@ -382,7 +387,6 @@ ALPHACORE_LOCAL_MINERS_FALLBACK="false"
 
 ALPHACORE_MINER_CONCURRENCY="128"
 ALPHACORE_MINER_RESPONSE_TIMEOUT_SECONDS="10"
-ALPHACORE_HANDSHAKE_TIMEOUT_SECONDS="5"
 ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS="600"
 ALPHACORE_DISPATCH_PROGRESS_LOG_INTERVAL_S="30"
 
