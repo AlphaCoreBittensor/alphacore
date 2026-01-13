@@ -9,7 +9,7 @@ Implements the complete validator lifecycle with improved patterns from Autoppia
 5. EXECUTION: Wait for miner responses
 6. EVALUATION: Compute scores and save progress
 7. FEEDBACK: Send per-task feedback for real-time learning (Autoppia pattern)
-8. FINALIZATION: Set weights based on scores
+8. FINALIZATION: Emit weights via epoch-synced emitter
 
 """
 
@@ -72,7 +72,7 @@ class Validator(
 	4. EXECUTION: Wait for miner responses
 	5. EVALUATION: Compute scores incrementally
 	6. FEEDBACK: Send per-task scores for real-time learning
-	7. FINALIZATION: Set weights based on scores
+	7. FINALIZATION: Emit weights via epoch-synced emitter
 
 	Hybrid approach combines:
 	- AlphaCore: Batch parallel dispatch, simple logic
@@ -121,6 +121,7 @@ class Validator(
 		# Initialize round management with epoch-based timing
 		bt.logging.info(f"Validator init: subtensor={getattr(self, 'subtensor', 'NOT SET')}")
 		bt.logging.info(f"Validator version: {VALIDATOR_VERSION}")
+		self._log_host_environment()
 
 		# Get tempo - it's a method that needs netuid parameter
 		tempo = DEFAULT_TEMPO
@@ -580,34 +581,81 @@ class Validator(
 				f"offset={int(self._weights_emit_block_offset)} action=skip_already_emitted"
 			)
 			return
-		if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
-			bt.logging.debug(
-				f"[WEIGHTS] Skipping emission (tasks={self._weights_tasks_completed}/{self._weights_min_tasks_before_emit})"
-			)
-			return
 		try:
-			if float(np.sum(self.scores)) <= 0.0:
-				bt.logging.debug(
-					f"[WEIGHTS] Skipping emission in window (epoch={epoch}, frac={fraction:.3f}): no non-zero scores"
-				)
+			if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
 				return
-		except Exception:
-			return
-		try:
-			self._emit_top_k_weights()
-			bt.logging.info(
-				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
-				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
-				f"offset={int(self._weights_emit_block_offset)} action=emitted"
-			)
-			self._last_weights_emit_epoch = epoch
-			bt.logging.info(
-				f"✅ [WEIGHTS] Emitted weights on chain (epoch={epoch}, block_in_epoch={int(current_block - epoch * self.round_manager.tempo)})"
-			)
+			try:
+				total_score = float(np.sum(self.scores))
+			except Exception:
+				total_score = 0.0
+			if total_score <= 0.0:
+				success = self._emit_burn_only_weights(reason="no non-zero scores")
+			else:
+				success = self._emit_top_k_weights()
+			if success:
+				bt.logging.info(
+					f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
+					f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
+					f"offset={int(self._weights_emit_block_offset)} action=emitted"
+				)
+				self._last_weights_emit_epoch = epoch
+				bt.logging.info(
+					f"✅ [WEIGHTS] Emitted weights on chain (epoch={epoch}, block_in_epoch={int(current_block - epoch * self.round_manager.tempo)})"
+				)
+			else:
+				bt.logging.warning(
+					f"[WEIGHTS] Emission failed (will retry next eligible window): "
+					f"block={int(current_block)} epoch={int(epoch)}"
+				)
 		except Exception as exc:
 			bt.logging.error(f"✗ [WEIGHTS] Emission failed: {exc}")
 
-	def _emit_top_k_weights(self, k: int = 5) -> None:
+	def _emit_burn_only_weights(self, reason: str) -> bool:
+		from subnet.validator.config import BURN_UID
+
+		scores = np.asarray(self.scores, dtype=np.float32)
+		n = int(getattr(self.metagraph, "n", 0) or scores.size)
+		if n <= 0:
+			raise RuntimeError("no metagraph available for burn-only weights")
+		weights = np.zeros(n, dtype=np.float32)
+		burn_uid = int(BURN_UID)
+		if burn_uid < 0 or burn_uid >= n:
+			raise RuntimeError(f"burn uid out of range for weights: {burn_uid}")
+		weights[burn_uid] = 1.0
+		bt.logging.info(f"✅ [WEIGHTS] Burn-only allocation (uid={burn_uid}) reason={reason}")
+
+		ema_scores = self.scores.copy()
+		try:
+			return self.set_weights(weights)
+		finally:
+			self.scores = ema_scores
+
+	def _log_host_environment(self) -> None:
+		try:
+			uname = os.uname()
+			bt.logging.info(
+				f"Host OS: {uname.sysname} {uname.release} {uname.version} {uname.machine}"
+			)
+		except Exception as exc:
+			bt.logging.debug(f"Host OS lookup failed: {exc}")
+
+		try:
+			version_text = Path("/proc/version").read_text(encoding="utf-8", errors="replace")
+			if "microsoft" in version_text.lower():
+				bt.logging.warning("Host OS appears to be WSL; KVM/Firecracker may be unavailable.")
+		except Exception:
+			pass
+
+		kvm_path = Path("/dev/kvm")
+		if kvm_path.exists():
+			if os.access(kvm_path, os.R_OK | os.W_OK):
+				bt.logging.info("KVM: /dev/kvm present and accessible")
+			else:
+				bt.logging.warning("KVM: /dev/kvm present but not accessible (check permissions)")
+		else:
+			bt.logging.warning("KVM: /dev/kvm not found (virtualization disabled/unavailable)")
+
+	def _emit_top_k_weights(self, k: int = 5) -> bool:
 		from subnet.validator.config import BURN_AMOUNT_PERCENTAGE, BURN_UID
 
 		scores = np.asarray(self.scores, dtype=np.float32)
@@ -657,7 +705,7 @@ class Validator(
 
 		ema_scores = self.scores.copy()
 		try:
-			self.set_weights(weights)
+			return self.set_weights(weights)
 		finally:
 			self.scores = ema_scores
 
@@ -666,7 +714,53 @@ class Validator(
 			try:
 				current_block = int(self.block)
 				tempo = int(getattr(self.round_manager, "tempo", 0) or 0)
+				epoch = int(current_block // tempo) if tempo > 0 else None
+				last_update = None
+				blocks_since = None
+				try:
+					last_update = int(self.metagraph.last_update[self.uid])
+					blocks_since = max(0, int(current_block - last_update))
+				except Exception:
+					last_update = None
+					blocks_since = None
+				if last_update is not None and blocks_since is not None and blocks_since > 4000:
+					bt.logging.info(
+						f"[WEIGHTS] Stale weights detected: last_set={last_update} "
+						f"current={current_block} delta={blocks_since}"
+					)
+					try:
+						if epoch is not None and self._last_weights_emit_epoch == epoch:
+							bt.logging.info(
+								f"[WEIGHTS] Stale emit skipped: already emitted this epoch (epoch={epoch})"
+							)
+						else:
+							success = self._emit_burn_only_weights(
+								reason=f"stale weights {blocks_since} blocks"
+							)
+							if success and epoch is not None:
+								self._last_weights_emit_epoch = epoch
+					except Exception as exc:
+						bt.logging.warning(f"[WEIGHTS] Stale burn-only emit failed: {exc}")
+				else:
+					if last_update is None or blocks_since is None:
+						bt.logging.warning(
+							"[WEIGHTS] Last set block unknown (metagraph last_update unavailable)"
+						)
+					else:
+						bt.logging.info(
+							f"[WEIGHTS] Weights age OK: last_set={last_update} "
+							f"current={current_block} delta={blocks_since}"
+						)
 				if not self._weights_emitter_logged_boot:
+					if last_update is not None:
+						bt.logging.info(
+							f"[WEIGHTS] Last set at block={last_update} "
+							f"(current={current_block}, delta={blocks_since})"
+						)
+					else:
+						bt.logging.warning(
+							"[WEIGHTS] Last set block unknown (metagraph last_update unavailable)"
+						)
 					bt.logging.info(
 						f"[WEIGHTS] Emitter started (offset={int(self._weights_emit_block_offset)}, "
 						f"min_tasks={int(self._weights_min_tasks_before_emit)}, "
@@ -676,6 +770,15 @@ class Validator(
 				if tempo > 0:
 					epoch = int(current_block // tempo)
 					if self._weights_emitter_last_epoch_logged != epoch:
+						if last_update is not None:
+							bt.logging.info(
+								f"[WEIGHTS] Last set at block={last_update} "
+								f"(current={current_block}, delta={blocks_since})"
+							)
+						else:
+							bt.logging.warning(
+								"[WEIGHTS] Last set block unknown (metagraph last_update unavailable)"
+							)
 						block_in_epoch = int(current_block - (epoch * tempo))
 						bt.logging.info(
 							f"[WEIGHTS] Epoch check: epoch={int(epoch)} "
@@ -748,7 +851,7 @@ class Validator(
 		4. EXECUTION: Wait for responses
 		5. EVALUATION: Score miners incrementally
 		6. FEEDBACK: Send per-task feedback (real-time learning)
-		7. FINALIZATION: Set weights based on scores
+	7. FINALIZATION: Emit weights via epoch-synced emitter
 
 		"""
 		round_started = False

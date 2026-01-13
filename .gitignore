@@ -1,5 +1,6 @@
 tasks/
 .venv-validation-api
+.venv-sandbox
 logs/
 AGENTS.md
 .DS_Store

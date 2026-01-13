@@ -83,7 +83,14 @@ def create_app() -> FastAPI:
     sandbox_queue_size = int(os.getenv("ALPHACORE_SANDBOX_QUEUE_SIZE", "64"))
     archive_root = os.environ.get("ALPHACORE_VALIDATION_ARCHIVE_ROOT")
     token_creds_file = os.getenv("ALPHACORE_GCP_CREDS_FILE")
-    log_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_DIR", "./logs/validation")).resolve()
+    repo_root: Optional[Path] = None
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "modules").is_dir() and (parent / "subnet").is_dir():
+            repo_root = parent
+            break
+    if repo_root is None:
+        repo_root = Path.cwd()
+    log_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_DIR", str(repo_root / "logs" / "validation"))).resolve()
     active_log_dir = Path(os.getenv("ALPHACORE_VALIDATION_ACTIVE_LOG_DIR", str(log_dir / "active"))).resolve()
     log_by_task_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_BY_TASK_DIR", str(log_dir / "by_task"))).resolve()
     log_by_miner_dir = Path(os.getenv("ALPHACORE_VALIDATION_LOG_BY_MINER_DIR", str(log_dir / "by_miner"))).resolve()
@@ -154,7 +161,7 @@ def create_app() -> FastAPI:
                     stream_log=bool(job_spec["stream_log"]),
                     quiet_kernel=bool(job_spec["quiet_kernel"]),
                     log_path=job_log_path,
-                    env={"GOOGLE_OAUTH_ACCESS_TOKEN": access_token},
+                    access_token=access_token,
                 )
                 result = await pool.run_one(job)
                 result_summary = result.summary if isinstance(result.summary, dict) else {}

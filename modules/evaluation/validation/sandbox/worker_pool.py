@@ -28,6 +28,7 @@ class SandboxJob:
     workspace_dir: Optional[Path] = None
     task_json: Optional[dict] = None
     creds_file: Optional[Path] = None
+    access_token: Optional[str] = None
     stream_log: bool = True
     quiet_kernel: bool = True
     net_checks: bool = False
@@ -106,9 +107,6 @@ class SandboxWorkerPool:
         cmd: list[str] = []
         if self._use_sudo:
             cmd.extend([str(self._sudo_bin), "-n"])
-            if job.env:
-                preserved = ",".join(sorted(job.env.keys()))
-                cmd.append(f"--preserve-env={preserved}")
         cmd.extend(
             [
                 str(self._python),
@@ -132,6 +130,8 @@ class SandboxWorkerPool:
             cmd.extend(["--include-path", str(include_path)])
         if job.creds_file:
             cmd.extend(["--creds-file", str(job.creds_file)])
+        if job.access_token:
+            cmd.extend(["--access-token", job.access_token])
         if job.stream_log:
             cmd.append("--stream-log")
         if job.quiet_kernel:
@@ -153,7 +153,7 @@ class SandboxWorkerPool:
             stderr=asyncio.subprocess.STDOUT,
             env=env,
         )
-        token = job.env.get("GOOGLE_OAUTH_ACCESS_TOKEN")
+        token = job.access_token or job.env.get("GOOGLE_OAUTH_ACCESS_TOKEN")
         tail: deque[str] = deque(maxlen=200)
 
         log_handle = None
@@ -162,6 +162,9 @@ class SandboxWorkerPool:
                 job.log_path.parent.mkdir(parents=True, exist_ok=True)
                 log_handle = open(job.log_path, "w", encoding="utf-8", errors="replace")
                 os.chmod(job.log_path, 0o600)
+                cmd_display = [arg if arg != token else "[REDACTED]" for arg in cmd]
+                log_handle.write(f"[Host] command: {' '.join(cmd_display)}\n")
+                log_handle.flush()
 
             assert proc.stdout is not None
             while True:

@@ -202,7 +202,7 @@ MINER_RESPONSE_TIMEOUT_SECONDS = _env_int(
 #   - task synapse: 1800s (30 minutes)
 HANDSHAKE_TIMEOUT_SECONDS = _env_int("ALPHACORE_HANDSHAKE_TIMEOUT_SECONDS", 5)
 TASK_SYNAPSE_TIMEOUT_SECONDS = _env_int(
-    "ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS", 1800
+    "ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS", 600
 )
 
 # Enable latency-aware scoring where slower miners are penalized

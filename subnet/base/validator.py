@@ -281,7 +281,7 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.error(f"burn_all failed: {e}")
         return zeros
 
-    def set_weights(self, weights=None, uids=None, **kwargs):
+    def set_weights(self, weights=None, uids=None, **kwargs) -> bool:
         """
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
@@ -303,7 +303,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 self.scores = provided.astype(np.float32, copy=True)
             except Exception as exc:
                 bt.logging.error(f"Invalid explicit weights provided to set_weights(): {exc}")
-                return
+                return False
 
         # Check if self.scores contains any NaN values and log a warning if it does.
         if np.isnan(self.scores).any():
@@ -325,7 +325,7 @@ class BaseValidatorNeuron(BaseNeuron):
         try:
             if float(np.sum(raw_weights)) <= 0.0:
                 bt.logging.warning("No non-zero weights to set on chain; skipping set_weights().")
-                return
+                return False
         except Exception:
             pass
 
@@ -383,6 +383,7 @@ class BaseValidatorNeuron(BaseNeuron):
             # Record successful weight setting in report if method exists
             if hasattr(self, "_report_weights_set"):
                 self._report_weights_set(success=True)
+            return True
         else:
             # Convert msg to string safely
             error_msg = str(msg) if msg else "Unknown error"
@@ -390,11 +391,11 @@ class BaseValidatorNeuron(BaseNeuron):
             bt.logging.error(f"set_weights failure raw: result={result!r} msg={msg!r}")
             if response is not None:
                 bt.logging.error(
-                    "set_weights chain response: success=%r message=%r error=%r extrinsic_function=%r",
-                    getattr(response, "success", None),
-                    getattr(response, "message", None),
-                    getattr(response, "error", None),
-                    getattr(response, "extrinsic_function", None),
+                    "set_weights chain response: "
+                    f"success={getattr(response, 'success', None)!r} "
+                    f"message={getattr(response, 'message', None)!r} "
+                    f"error={getattr(response, 'error', None)!r} "
+                    f"extrinsic_function={getattr(response, 'extrinsic_function', None)!r}"
                 )
                 receipt = getattr(response, "extrinsic_receipt", None)
                 if receipt is not None:
@@ -440,6 +441,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 if hasattr(self, "round_manager") and self.round_manager.current_round_report:
                     report = self.round_manager.current_round_report
                     bt.logging.debug(f"Report now has {len(report.errors)} errors")
+            return False
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
