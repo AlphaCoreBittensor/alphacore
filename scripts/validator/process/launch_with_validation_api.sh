@@ -60,7 +60,7 @@ Usage:
     --network NETWORK_ALIAS [options]
 
 New split scripts:
-  bash scripts/validator/process/launch_validation_api.sh --network NETWORK --gcp-creds-file PATH [options]
+  bash scripts/validator/process/launch_validation_api.sh --gcp-creds-file PATH [options]
   bash scripts/validator/process/launch_validator.sh --wallet-name WALLET --hotkey HOTKEY --netuid NETUID --network NETWORK [options]
 
 Required:
@@ -374,7 +374,7 @@ fi
 # ----------------------------
 # 1) Start Validation API (PM2)
 # ----------------------------
-VALIDATION_ARGS=(--network "$NETWORK" --process-name "$VALIDATION_PROCESS_NAME" --env-out "$VALIDATION_ENV_OUT")
+VALIDATION_ARGS=(--process-name "$VALIDATION_PROCESS_NAME" --env-out "$VALIDATION_ENV_OUT")
 VALIDATION_ARGS+=(--venv-dir "$VALIDATION_VENV_DIR" --bind-host "$VALIDATION_HTTP_HOST" --port "$VALIDATION_HTTP_PORT")
 if [[ -n "$GCP_CREDS_FILE" ]]; then
   VALIDATION_ARGS+=(--gcp-creds-file "$GCP_CREDS_FILE")

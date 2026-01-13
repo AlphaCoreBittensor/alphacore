@@ -262,7 +262,7 @@ main() {
   refresh_validator_deps
 
   log "Re-launching Validation API (PM2) under namespace: $PM2_NAMESPACE"
-  VALIDATION_LAUNCH_ARGS=(--network "$NETWORK" --pm2-namespace "$PM2_NAMESPACE")
+  VALIDATION_LAUNCH_ARGS=(--pm2-namespace "$PM2_NAMESPACE")
   if [[ -n "${GCP_CREDS_FILE:-}" ]]; then
     VALIDATION_LAUNCH_ARGS+=(--gcp-creds-file "$GCP_CREDS_FILE")
   fi

@@ -34,7 +34,7 @@ Required (one of):
 Options:
   --process-name NAME      Default: alphacore-validation-api
   --pm2-namespace NAME     Default: alphacore (or env PM2_NAMESPACE)
-  --env-out PATH           Default: env/<network>/validation-api.env
+  --env-out PATH           Default: env/validation-api.env
   --venv-dir PATH          Default: <repo>/.venv-validation-api
   --bind-host HOST         Default: 127.0.0.1
   --port PORT              Default: 8888
