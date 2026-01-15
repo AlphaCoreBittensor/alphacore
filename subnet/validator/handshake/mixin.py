@@ -16,6 +16,7 @@ import asyncio
 import os
 import time
 from typing import Dict, Optional
+from pathlib import Path
 
 import bittensor as bt
 
@@ -109,26 +110,31 @@ class HandshakeMixin:
                     )
                     
                     if is_alive:
+                        status = "ready"
                         bt.logging.debug(
                             f"✓ UID {uid} ALIVE | v{resp_single.miner_version} | "
                             f"capacity={resp_single.available_capacity} | latency={latency:.2f}s"
                         )
+                        error_type = ""
+                        error_msg = ""
                     else:
                         error_msg = getattr(resp_single, "error_message", "Unknown error")
+                        status = "not_ready"
+                        error_type = "not_ready"
                         bt.logging.debug(
                             f"✗ UID {uid} NOT READY | Error: {error_msg} | latency={latency:.2f}s"
                         )
                     
-                    return uid, resp_single, is_alive, latency
+                    return uid, resp_single, is_alive, latency, status, error_type, error_msg
                     
                 except asyncio.TimeoutError:
                     latency = time.time() - start
                     bt.logging.debug(f"✗ UID {uid} TIMEOUT | latency={latency:.2f}s")
-                    return uid, None, False, latency
+                    return uid, None, False, latency, "timeout", "timeout", "timeout"
                 except Exception as e:
                     latency = time.time() - start
                     bt.logging.debug(f"✗ UID {uid} ERROR | {e} | latency={latency:.2f}s")
-                    return uid, None, False, latency
+                    return uid, None, False, latency, "error", type(e).__name__, repr(e)
 
             # Gather all handshakes - only send to miners that have registered axons
             # Filter to UIDs with non-zero IP (skip validators which don't have axons)
@@ -168,11 +174,39 @@ class HandshakeMixin:
             responses = {}
             alive_count = 0
 
-            for uid, response, is_alive, latency in results:
+            failure_counts = {"timeout": 0, "error": 0, "not_ready": 0}
+            failure_samples: list[str] = []
+            detail_rows: list[str] = []
+            for uid, response, is_alive, latency, status, error_type, error_msg in results:
                 responses[uid] = response
+                ax = self.metagraph.axons[uid]
+                detail_rows.append(
+                    "uid={uid} is_alive={is_alive} ip={ip} port={port} status={status} "
+                    "error_type={error_type} latency_s={latency:.2f} miner_version={version} "
+                    "capacity={capacity} error={error}".format(
+                        uid=uid,
+                        ip=getattr(ax, "ip", None),
+                        port=getattr(ax, "port", None),
+                        status=status,
+                        is_alive=is_alive,
+                        error_type=error_type,
+                        latency=latency,
+                        version=getattr(response, "miner_version", None),
+                        capacity=getattr(response, "available_capacity", None),
+                        error=str(error_msg),
+                    )
+                )
                 if is_alive:
                     alive_uids.append(uid)
                     alive_count += 1
+                else:
+                    if status in failure_counts:
+                        failure_counts[status] += 1
+                    if len(failure_samples) < 5:
+                        failure_samples.append(
+                            f"uid={uid} {getattr(ax, 'ip', None)}:{getattr(ax, 'port', None)} "
+                            f"status={status} err={str(error_msg)[:120]}"
+                        )
 
             # Store results
             self._handshake_results[round_id] = responses
@@ -183,6 +217,32 @@ class HandshakeMixin:
                 f"✓ Handshake complete: {alive_count}/{len(self.metagraph.uids)} miners ALIVE | "
                 f"Time: {handshake_time:.2f}s"
             )
+            bt.logging.info(
+                "Handshake summary: "
+                f"queried={len(miner_uids)} ready={alive_count} "
+                f"not_ready={failure_counts['not_ready']} "
+                f"timeout={failure_counts['timeout']} "
+                f"error={failure_counts['error']}"
+            )
+            try:
+                log_dir = Path(os.getenv("ALPHACORE_HANDSHAKE_LOG_DIR", "logs/handshake"))
+                log_dir.mkdir(parents=True, exist_ok=True)
+                detail_path = log_dir / f"handshake-{round_id}.log"
+                with detail_path.open("w", encoding="utf-8") as fh:
+                    fh.write(
+                        f"round_id={round_id} "
+                        f"handshake_success={alive_count > 0} "
+                        f"queried={len(miner_uids)} ready={alive_count} "
+                        f"not_ready={failure_counts['not_ready']} "
+                        f"timeout={failure_counts['timeout']} "
+                        f"error={failure_counts['error']}\n"
+                    )
+                    for row in detail_rows:
+                        fh.write(f"{row}\n")
+                bt.logging.info(f"Handshake details: {detail_path}")
+            except Exception:
+                if failure_samples:
+                    bt.logging.warning(f"Handshake failures (sample): {'; '.join(failure_samples)}")
             try:
                 self._ledger(
                     "handshake_complete",

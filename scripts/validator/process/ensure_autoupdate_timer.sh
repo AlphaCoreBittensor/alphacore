@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 PM2_NAMESPACE=""
 CONFIG_FILE=""
 INTERVAL="${INTERVAL:-2m}"
-STATE_DIR="$HOME/.local/state/alphacore/autoupdate"
+STATE_DIR="$REPO_ROOT/logs/autoupdate"
 
 usage() {
   cat <<'EOF'
@@ -67,8 +67,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=${REPO_ROOT}
-StandardOutput=append:%h/.local/state/alphacore/autoupdate/%i.log
-StandardError=append:%h/.local/state/alphacore/autoupdate/%i.log
+StandardOutput=append:${STATE_DIR}/%i.log
+StandardError=append:${STATE_DIR}/%i.log
 ExecStart=/bin/bash -lc 'bash ${REPO_ROOT}/scripts/validator/process/autoupdate_release.sh --config ${CONFIG_FILE}'
 EOF
 

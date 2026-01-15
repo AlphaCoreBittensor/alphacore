@@ -522,8 +522,13 @@ DHCP_START="${ACORE_DHCP_START:-172.16.0.100}"
 DHCP_END="${ACORE_DHCP_END:-172.16.0.199}"
 DHCP_LEASE="12h"
 PROXY_PORT="8888"
-TAP_OWNER_UID="${TAP_OWNER_UID:-${SUDO_UID:-${TERRAFORM_USER}}}"
-TAP_OWNER_GID="${TAP_OWNER_GID:-${SUDO_GID:-${TERRAFORM_USER}}}"
+
+if [[ -z "${SUDO_UID:-}" || -z "${SUDO_GID:-}" ]]; then
+  echo "[acore-net] ERROR: missing SUDO_UID/SUDO_GID; run setup.sh via sudo from the target user." >&2
+  exit 1
+fi
+TAP_OWNER_UID="${SUDO_UID}"
+TAP_OWNER_GID="${SUDO_GID}"
 
 # Detect default egress interface (used by proxy, not by TAP)
 EGRESS_IFACE="$(ip route get 8.8.8.8 2>/dev/null \
@@ -697,9 +702,9 @@ sysctl -w "net.ipv6.conf.${BR_NAME}.disable_ipv6=1" >/dev/null 2>&1 || true
 echo "==> Installing sudoers rule for sandbox runner..."
 TAP_OWNER_USER="$(id -nu "${TAP_OWNER_UID}" 2>/dev/null || true)"
 if [ -n "${TAP_OWNER_USER}" ]; then
-  cat > /etc/sudoers.d/alphacore-sandbox-runner <<'EOF'
+cat > /etc/sudoers.d/alphacore-sandbox-runner <<'EOF'
 # Allow the sandbox runner to execute via sudo without a password (needed for non-interactive supervisors).
-# The worker pool invokes: sudo -n --preserve-env=GOOGLE_OAUTH_ACCESS_TOKEN /usr/bin/python3 .../sandbox.py ...
+# The worker pool invokes: sudo -n /usr/bin/python3 .../sandbox.py ...
 #
 # NOTE: the sandbox runner needs root for mounts/jailer setup, but it refuses to start Firecracker as uid=0.
 EOF
@@ -717,7 +722,7 @@ echo "==> Installing systemd service for sandbox networking/proxy..."
 install -m 0755 "${SCRIPT_DIR}/alphacore-sandbox-net.sh" /usr/local/sbin/alphacore-sandbox-net
 install -m 0644 "${SCRIPT_DIR}/alphacore-sandbox-net.service" /etc/systemd/system/alphacore-sandbox-net.service
 
-# Create a default env file once (edit to override ownership/pool size).
+# Create or update the env file (keep ownership aligned with the sudo caller).
 if [ ! -f /etc/default/alphacore-sandbox-net ]; then
   cat > /etc/default/alphacore-sandbox-net <<EOF
 # Optional overrides for /usr/local/sbin/alphacore-sandbox-net
@@ -727,6 +732,25 @@ TAP_OWNER_UID=${TAP_OWNER_UID}
 TAP_OWNER_GID=${TAP_OWNER_GID}
 ACORE_TAP_POOL_SIZE=${TAP_POOL_SIZE}
 EOF
+else
+  tmp="$(mktemp)"
+  awk \
+    -v uid="${TAP_OWNER_UID}" \
+    -v gid="${TAP_OWNER_GID}" \
+    -v pool="${TAP_POOL_SIZE}" \
+    '
+      BEGIN {seen_uid=0; seen_gid=0; seen_pool=0}
+      /^TAP_OWNER_UID=/ {print "TAP_OWNER_UID=" uid; seen_uid=1; next}
+      /^TAP_OWNER_GID=/ {print "TAP_OWNER_GID=" gid; seen_gid=1; next}
+      /^ACORE_TAP_POOL_SIZE=/ {print "ACORE_TAP_POOL_SIZE=" pool; seen_pool=1; next}
+      {print}
+      END {
+        if (!seen_uid) print "TAP_OWNER_UID=" uid
+        if (!seen_gid) print "TAP_OWNER_GID=" gid
+        if (!seen_pool) print "ACORE_TAP_POOL_SIZE=" pool
+      }
+    ' /etc/default/alphacore-sandbox-net > "$tmp"
+  mv "$tmp" /etc/default/alphacore-sandbox-net
 fi
 
 systemctl daemon-reload
@@ -758,11 +782,30 @@ systemctl enable --now systemd-tmpfiles-clean.timer >/dev/null 2>&1 || true
 ########################################
 # 14. Grant /dev/kvm to terraformrunner
 ########################################
+echo "==> Ensuring KVM modules are loaded (best effort)..."
+modprobe kvm 2>/dev/null || echo "WARNING: failed to load kvm module (continuing)" >&2
+modprobe kvm_intel 2>/dev/null || echo "WARNING: failed to load kvm_intel module (continuing)" >&2
+
+echo "==> Checking KVM availability (best effort)..."
+if grep -Eq '(vmx|svm)' /proc/cpuinfo; then
+  echo "KVM: CPU virtualization flags detected."
+else
+  echo "WARNING: CPU virtualization flags not detected; KVM may be unavailable." >&2
+fi
+if [ -d /sys/module/kvm ]; then
+  echo "KVM: kernel module appears loaded."
+else
+  echo "WARNING: KVM kernel module not loaded." >&2
+fi
+if [ -e /dev/kvm ]; then
+  echo "KVM: /dev/kvm present."
+else
+  echo "WARNING: /dev/kvm not found. Ensure virtualization is enabled." >&2
+fi
+
 echo "==> Granting ${TERRAFORM_USER} access to /dev/kvm (if present)..."
 if [ -e /dev/kvm ]; then
   setfacl -m u:${TERRAFORM_USER}:rw /dev/kvm
-else
-  echo "WARNING: /dev/kvm not found. Ensure virtualization is enabled."
 fi
 
 ########################################

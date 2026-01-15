@@ -187,30 +187,9 @@ def process_weights_for_netuid(
         final_weights = np.ones(metagraph.n, dtype=np.float32) / float(metagraph.n)
         return np.arange(len(final_weights)), final_weights
 
-    elif non_zero_weights.size < min_allowed_weights:
-        # Pad with tiny weights so the emitted vector meets chain min_allowed_weights.
-        needed = int(min_allowed_weights - non_zero_weights.size)
-        try:
-            available = np.setdiff1d(np.asarray(uids), non_zero_weight_uids, assume_unique=False)
-            pad_uids = available[:needed]
-        except Exception:
-            pad_uids = np.asarray([], dtype=np.int64)
-
-        epsilon = max(1e-5, float(np.min(non_zero_weights)) * 0.01)
-        padded = pad_uids.size if hasattr(pad_uids, "size") else len(pad_uids)
-        if padded <= 0:
-            bittensor.logging.warning(
-                f"Too few non-zero weights ({non_zero_weights.size} < {min_allowed_weights}); unable to pad, returning uniform."
-            )
-            final_weights = np.ones(metagraph.n, dtype=np.float32) / float(metagraph.n)
-            return np.arange(len(final_weights)), final_weights
-
+    if non_zero_weights.size < min_allowed_weights:
         bittensor.logging.warning(
-            f"Too few non-zero weights ({non_zero_weights.size} < {min_allowed_weights}); padding {padded} uids with epsilon weights."
-        )
-        non_zero_weight_uids = np.concatenate([non_zero_weight_uids, pad_uids])
-        non_zero_weights = np.concatenate(
-            [non_zero_weights, np.full(padded, epsilon, dtype=np.float32)]
+            f"Too few non-zero weights ({non_zero_weights.size} < {min_allowed_weights}); proceeding without padding."
         )
 
     # bittensor.logging.debug("non_zero_weights", non_zero_weights)

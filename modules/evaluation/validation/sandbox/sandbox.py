@@ -514,9 +514,10 @@ def stage_workspace(
     *,
     is_zip: bool,
     tf_provider_debug: bool = False,
+    access_token: Optional[str] = None,
 ) -> Path:
     """Prepare a workspace (zip or directory), copy the runner, and bundle auth artifacts."""
-    token = os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN")
+    token = access_token or os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN")
     # Security model: only a short-lived token enters the guest. If a creds file is supplied,
     # we use it host-side to mint a token and still only inject the token.
     if not token and creds_path is not None:
@@ -1027,6 +1028,10 @@ def main() -> int:
         type=Path,
         help="Write a host-side JSON summary of the sandbox run (success/score/error).",
     )
+    parser.add_argument(
+        "--access-token",
+        help="OAuth access token to pass into the sandbox (avoid env-based token passing).",
+    )
     args = parser.parse_args()
 
     workspace_is_zip = args.workspace_zip is not None
@@ -1072,6 +1077,7 @@ def main() -> int:
                 args.creds_file,
                 is_zip=workspace_is_zip,
                 tf_provider_debug=args.enable_tf_provider_debug,
+                access_token=args.access_token,
             )
             for include in args.include_path:
                 print(f"==> [Host] Including path in workspace: {include}")
@@ -1096,8 +1102,11 @@ def main() -> int:
         wait_for_socket(config.api_socket)
 
         print("==> [Host] Configuring VM...")
-        if not os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN") and args.creds_file is None:
-            raise SystemExit("GOOGLE_OAUTH_ACCESS_TOKEN must be set before running the sandbox (or pass --creds-file to mint one).")
+        if not (os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN") or args.access_token or args.creds_file):
+            raise SystemExit(
+                "GOOGLE_OAUTH_ACCESS_TOKEN must be set before running the sandbox "
+                "(or pass --access-token/--creds-file to provide one)."
+            )
         curl_put(config.api_socket, "machine-config", f'{{"vcpu_count": {config.vcpus}, "mem_size_mib": {config.mem_mb}}}')
         boot_args = "console=ttyS0 reboot=k panic=1 pci=off init=/init-sandbox.sh root=/dev/vda ro"
 

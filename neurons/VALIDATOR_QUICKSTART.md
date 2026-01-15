@@ -127,14 +127,10 @@ bash scripts/validator/process/launch_validation_api.sh \
 
 ### Start the Validator
 
-> **Important:**
-> Coordinate your **epoch slot index** with the AlphaCore team.
-> Slots are used to distribute task generation evenly across validators.
-
 ```bash
 bash scripts/validator/process/launch_validator.sh \
-  --wallet.name <wallet-name> \
-  --wallet.hotkey <hotkey-name> \
+  --wallet-name <wallet-name> \
+  --hotkey <hotkey-name> \
   --network finney \
   --netuid 66 \
   --gcp-creds-file /path/to/alphacore/gcp-creds.json \
