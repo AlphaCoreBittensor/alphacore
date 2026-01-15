@@ -170,7 +170,7 @@ COMPOSITE_FAMILIES: Sequence[CompositionFamily] = (
     CompositionFamily(
         name="topic_with_subscription",
         mandatory=("pubsub_topic", "pubsub_subscription"),
-        optional=("storage_bucket", "service_account"),
+        optional=("storage_bucket",),
         min_optional=0,
         max_optional=2,
     ),

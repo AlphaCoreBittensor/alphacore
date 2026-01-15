@@ -15,6 +15,14 @@ def _as_str(value: Any) -> str | None:
     return str(value)
 
 
+def _matches_case_insensitive(actual: Any, expected: Any) -> bool:
+    actual_str = _as_str(actual)
+    expected_str = _as_str(expected)
+    if actual_str is None or expected_str is None:
+        return False
+    return actual_str.lower() == expected_str.lower()
+
+
 def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
     """
     Apply the specified comparison rule to validate a field.
@@ -38,7 +46,13 @@ def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
     elif rule == "ends_with":
         return actual_str.endswith(expected_str)
     else:  # exact_match (default)
-        return actual_str == expected_str
+        if actual_str == expected_str:
+            return True
+        if _matches_case_insensitive(actual_str, expected_str):
+            return True
+        if _matches_ref(actual_str, expected_str):
+            return True
+        return False
 
 
 def _matches_ref(actual: Any, expected: Any) -> bool:
@@ -218,6 +232,13 @@ def _validate_compute_instance(
                     f"{path}: expected subnetwork '{expected_value}', got '{actual_value}'"
                 )
             continue
+        if path.endswith(".network") or path.endswith("values.network_interface.0.network"):
+            if not _matches_ref(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(
+                    f"{path}: expected network '{expected_value}', got '{actual_value}'"
+                )
+            continue
 
         if "metadata_startup_script" in path:
             if _rstrip_newlines(actual_value) != _rstrip_newlines(expected_value):
@@ -262,6 +283,12 @@ def _validate_compute_firewall(
                 result.errors.append(
                     f"{path}: expected network '{expected_value}', got '{actual_value}'"
                 )
+            continue
+
+        if path.endswith(".direction") or path.endswith("values.direction"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
             continue
 
         if actual_value != expected_value:
@@ -518,6 +545,44 @@ def _validate_storage_bucket_object(
     return result
 
 
+def _validate_storage_bucket(
+    invariant: Invariant,
+    resource: Dict[str, Any],
+    parser: TerraformStateParser,
+) -> InvariantValidation:
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".storage_class") or path.endswith("values.storage_class"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".location") or path.endswith("values.location"):
+            # Allow case-insensitive match and tolerate region self_link fragments
+            actual_str = _as_str(actual_value) or ""
+            expected_str = _as_str(expected_value) or ""
+            if not _matches_case_insensitive(actual_str, expected_str):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
+    return result
+
+
 def _validate_iam_member_prefix(
     invariant: Invariant,
     resource: Dict[str, Any],
@@ -646,6 +711,7 @@ _VALIDATORS: Dict[str, ValidatorFunc] = {
     "google_secret_manager_secret_version": _validate_secret_manager_secret_version,
     "google_secret_manager_secret_iam_member": _validate_secret_manager_secret_iam_member,
     "google_service_account_iam_member": _validate_service_account_iam_member,
+    "google_storage_bucket": _validate_storage_bucket,
     "google_storage_bucket_object": _validate_storage_bucket_object,
     "google_project_iam_member": _validate_iam_member_prefix,
     "google_storage_bucket_iam_member": _validate_iam_member_prefix,
