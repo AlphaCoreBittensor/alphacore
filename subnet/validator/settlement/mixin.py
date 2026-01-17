@@ -19,8 +19,8 @@ class SettlementMixin:
         Execute the settlement phase and update EMA scores.
         
         Phases:
-        1. Compute WTA rewards from scores
-        2. Update EMA scores for positive scorers (no burn, no weights)
+        1. Filter to positive, non-burn scores
+        2. Update EMA scores using raw final scores (no normalization, no weights)
         
         Args:
             scores: UID -> score mapping from evaluation phase
@@ -52,7 +52,7 @@ class SettlementMixin:
             return {}
 
         # ─────────────────────────────────────────────────────────────────────
-        # Phase 1: Normalize positive scores for EMA updates
+        # Phase 1: Use raw final scores for EMA updates
         # ─────────────────────────────────────────────────────────────────────
         try:
             n = int(getattr(self.metagraph, "n", len(self.metagraph.uids)))
@@ -74,13 +74,12 @@ class SettlementMixin:
 
             score_uids = list(positive_scores.keys())
             score_values = np.array([positive_scores[uid] for uid in score_uids], dtype=np.float32)
-            score_sum = float(np.sum(score_values))
-            if score_sum <= 0.0:
-                bt.logging.info("⏭️ [SETTLEMENT] Skipping score update (no positive score sum)")
+            score_values = np.clip(score_values, 0.0, 1.0)
+            if not np.any(score_values > 0.0):
+                bt.logging.info("⏭️ [SETTLEMENT] Skipping score update (no positive scores)")
                 return {}
 
-            score_values = score_values / score_sum
-            bt.logging.info("[SETTLEMENT] Scores exclude burn (positive scores only)")
+            bt.logging.info("[SETTLEMENT] Scores exclude burn (positive scores only; no normalization)")
             self.update_scores(score_values, score_uids)
             bt.logging.info(
                 f"✓ [SETTLEMENT] Updated rolling scores (uids={len(score_uids)})"

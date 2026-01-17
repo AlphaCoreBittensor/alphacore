@@ -159,6 +159,8 @@ class Validator(
 		self._weights_tasks_completed = 0
 		self._weights_emitter_logged_boot = False
 		self._weights_emitter_last_epoch_logged: Optional[int] = None
+		self._weights_emitter_last_skip_epoch: Optional[int] = None
+		self._weights_emitter_last_age_log_epoch: Optional[int] = None
 		self._timed_heartbeat_interval_seconds = self._env_float(
 			"ALPHACORE_TIMED_HEARTBEAT_SECONDS",
 			default=60.0,
@@ -575,11 +577,13 @@ class Validator(
 			)
 			return
 		if self._last_weights_emit_epoch == epoch:
-			bt.logging.info(
-				f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
-				f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
-				f"offset={int(self._weights_emit_block_offset)} action=skip_already_emitted"
-			)
+			if self._weights_emitter_last_skip_epoch != epoch:
+				bt.logging.info(
+					f"[WEIGHTS] Check: block={int(current_block)} epoch={int(epoch)} "
+					f"block_in_epoch={int(current_block - epoch * self.round_manager.tempo)} "
+					f"offset={int(self._weights_emit_block_offset)} action=skip_already_emitted"
+				)
+				self._weights_emitter_last_skip_epoch = epoch
 			return
 		try:
 			if self._weights_tasks_completed < self._weights_min_tasks_before_emit:
@@ -743,14 +747,18 @@ class Validator(
 						bt.logging.warning(f"[WEIGHTS] Stale burn-only emit failed: {exc}")
 				else:
 					if last_update is None or blocks_since is None:
-						bt.logging.warning(
-							"[WEIGHTS] Last set block unknown (metagraph last_update unavailable)"
-						)
+						if self._weights_emitter_last_age_log_epoch != epoch:
+							bt.logging.warning(
+								"[WEIGHTS] Last set block unknown (metagraph last_update unavailable)"
+							)
+							self._weights_emitter_last_age_log_epoch = epoch
 					else:
-						bt.logging.info(
-							f"[WEIGHTS] Weights age OK: last_set={last_update} "
-							f"current={current_block} delta={blocks_since}"
-						)
+						if self._weights_emitter_last_age_log_epoch != epoch:
+							bt.logging.info(
+								f"[WEIGHTS] Weights age OK: last_set={last_update} "
+								f"current={current_block} delta={blocks_since}"
+							)
+							self._weights_emitter_last_age_log_epoch = epoch
 				if not self._weights_emitter_logged_boot:
 					if last_update is not None:
 						bt.logging.info(
