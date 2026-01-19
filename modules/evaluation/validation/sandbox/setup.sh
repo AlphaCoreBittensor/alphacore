@@ -2,7 +2,36 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+find_repo_root() {
+  local dir="$SCRIPT_DIR"
+  local top=""
+  if command -v git >/dev/null 2>&1; then
+    top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$top" ]]; then
+      echo "$top"
+      return 0
+    fi
+  fi
+  while [[ "$dir" != "/" ]]; do
+    if [[ -d "$dir/.git" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    if [[ -f "$dir/VERSION" && -d "$dir/subnet" && -d "$dir/modules" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+REPO_ROOT="$(find_repo_root || true)"
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "[ERROR] Failed to resolve repo root from ${SCRIPT_DIR}." >&2
+  exit 1
+fi
 
 ### VERSIONS ###
 TF_VERSION="1.14.0"
