@@ -469,6 +469,9 @@ class TaskInstructionGenerator:
             "Write like a real internal ticket: brief context, then what to provision. "
             "Include all pinned identifiers and values somewhere in the text, but do NOT present them as a rigid "
             "'field equals value' specification. Prefer outcome phrasing. "
+            "CRITICAL: When resource requirements specify flexible naming rules like 'starts with', 'ends with', or 'equals', "
+            "you MUST preserve these comparison qualifiers in your output. For example: 'name starts with bucket-prefix' or 'name ends with -production'. "
+            "These are not stylistic suggestions - they define validation logic. "
             "When mentioning enum-like configuration values (e.g., formats, storage classes, directions), prefer lowercase words in the narrative. "
             "Do not start with policy-like lines such as 'All resources must…'. "
             "Avoid lecturing tone and avoid repeating 'Ensure…' every sentence. "
@@ -907,7 +910,7 @@ class TaskInstructionGenerator:
 
     def _fallback_instructions(self, task: TerraformTask) -> str:
         submission_details = self._format_submission_details(task)
-        requirements_summary = self._summarize_invariants(task.spec.invariants)
+        requirements_summary = self._format_invariants(task.spec.invariants)
         kind_description = self._describe_kind(task.spec.kind)
         metadata = task.spec.metadata or {}
         hints = metadata.get("hints") or []
@@ -1120,10 +1123,26 @@ class TaskInstructionGenerator:
                     return raw.lower()
                 return value
 
-            fields = ", ".join(
-                f"{TaskInstructionGenerator._humanize_field(k)} equals {json.dumps(_display_value(v), ensure_ascii=True)}"
-                for k, v in shuffled_fields
-            )
+            field_strs = []
+            for k, v in shuffled_fields:
+                # Check if this field has a special comparison rule
+                rule = invariant.comparison_rule.get(k, "exact_match")
+                humanized = TaskInstructionGenerator._humanize_field(k)
+
+                if rule == "starts_with":
+                    field_strs.append(
+                        f"{humanized} starts with {json.dumps(_display_value(v), ensure_ascii=True)}"
+                    )
+                elif rule == "ends_with":
+                    field_strs.append(
+                        f"{humanized} ends with {json.dumps(_display_value(v), ensure_ascii=True)}"
+                    )
+                else:  # exact_match
+                    field_strs.append(
+                        f"{humanized} equals {json.dumps(_display_value(v), ensure_ascii=True)}"
+                    )
+
+            fields = ", ".join(field_strs)
             lines.append(fields)
         return "\n".join(lines) if lines else "No requirement details provided."
 

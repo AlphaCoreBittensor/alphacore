@@ -37,5 +37,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_topic,
             base_hints=("Keep the topic isolated with explicit retention.",),
             weight=0.9,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

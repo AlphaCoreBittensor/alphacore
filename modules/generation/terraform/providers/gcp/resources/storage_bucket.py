@@ -40,5 +40,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_bucket,
             base_hints=("Keep bucket configs minimal yet explicit.",),
             weight=1.1,
+            naming_rules=("starts_with", "ends_with"),  # Buckets are globally unique
         )
     ]

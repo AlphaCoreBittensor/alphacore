@@ -161,7 +161,144 @@ else
 fi
 
 ########################################
-# 1b. Install gcloud CLI
+# 1b. Cleanup stale autoupdate timers
+########################################
+reset_autoupdate_timers() {
+  local user="$1"
+  local home="$2"
+  local repo="$3"
+
+  local systemd_dir="${home}/.config/systemd/user"
+  local service_path="${systemd_dir}/alphacore-autoupdate@.service"
+  local timer_path="${systemd_dir}/alphacore-autoupdate@.timer"
+  local wants_dir="${systemd_dir}/timers.target.wants"
+  local systemd_system_dir="/etc/systemd/system"
+  local system_service_path="${systemd_system_dir}/alphacore-autoupdate@.service"
+  local system_timer_path="${systemd_system_dir}/alphacore-autoupdate@.timer"
+  local system_wants_dir="${systemd_system_dir}/timers.target.wants"
+  local uid=""
+
+  echo "==> Resetting autoupdate timers for user '${user}'..."
+
+  if command -v loginctl >/dev/null 2>&1; then
+    if ! loginctl enable-linger "$user" >/dev/null 2>&1; then
+      echo "WARNING: Failed to enable lingering for ${user} (user systemd may be unavailable without login)." >&2
+    fi
+  fi
+
+  local user_systemd_ok="0"
+  if command -v systemctl >/dev/null 2>&1; then
+    uid="$(id -u "$user" 2>/dev/null || true)"
+    if [[ -n "${uid:-}" && -d "/run/user/${uid}" ]]; then
+      if ! systemctl start "user@${uid}.service" >/dev/null 2>&1; then
+        echo "WARNING: Failed to start user@${uid}.service for ${user}." >&2
+      fi
+      if XDG_RUNTIME_DIR="/run/user/${uid}" sudo -u "$user" systemctl --user show-environment >/dev/null 2>&1; then
+        user_systemd_ok="1"
+      fi
+    fi
+  fi
+
+  if [[ "$user_systemd_ok" == "1" ]]; then
+    local timers
+    timers="$(XDG_RUNTIME_DIR="/run/user/${uid}" sudo -u "$user" systemctl --user list-units --type=timer --all --no-legend 2>/dev/null \
+      | awk '{print $1}' | grep -F 'alphacore-autoupdate@' || true)"
+    if [[ -n "${timers:-}" ]]; then
+      while IFS= read -r unit; do
+        out="$(XDG_RUNTIME_DIR="/run/user/${uid}" sudo -u "$user" systemctl --user stop "$unit" 2>&1)" || \
+          echo "WARNING: Failed to stop ${unit} for ${user}: ${out}" >&2
+        out="$(XDG_RUNTIME_DIR="/run/user/${uid}" sudo -u "$user" systemctl --user disable "$unit" 2>&1)" || \
+          echo "WARNING: Failed to disable ${unit} for ${user}: ${out}" >&2
+      done <<< "$timers"
+    fi
+    out="$(XDG_RUNTIME_DIR="/run/user/${uid}" sudo -u "$user" systemctl --user daemon-reload 2>&1)" || \
+      echo "WARNING: Failed to reload user systemd for ${user}: ${out}" >&2
+  else
+    echo "==> User systemd not available for ${user}; removing unit files only."
+  fi
+
+  rm -f "$service_path" "$timer_path"
+  rm -f "${wants_dir}"/alphacore-autoupdate@*.timer 2>/dev/null || true
+
+  if command -v systemctl >/dev/null 2>&1; then
+    local sys_timers
+    sys_timers="$(systemctl list-units --type=timer --all --no-legend 2>/dev/null \
+      | awk '{print $1}' | grep -F 'alphacore-autoupdate@' || true)"
+    if [[ -n "${sys_timers:-}" ]]; then
+      while IFS= read -r unit; do
+        out="$(systemctl stop "$unit" 2>&1)" || \
+          echo "WARNING: Failed to stop system timer ${unit}: ${out}" >&2
+        out="$(systemctl disable "$unit" 2>&1)" || \
+          echo "WARNING: Failed to disable system timer ${unit}: ${out}" >&2
+      done <<< "$sys_timers"
+    fi
+  fi
+
+  rm -f "$system_service_path" "$system_timer_path"
+  rm -f "${system_wants_dir}"/alphacore-autoupdate@*.timer 2>/dev/null || true
+  if command -v systemctl >/dev/null 2>&1; then
+    out="$(systemctl daemon-reload 2>&1)" || \
+      echo "WARNING: Failed to reload systemd after removing system timers: ${out}" >&2
+  fi
+
+  if command -v crontab >/dev/null 2>&1; then
+    tmp="$(mktemp)"
+    crontab -u "$user" -l 2>/dev/null | grep -Fv "autoupdate_release.sh" >"$tmp" || true
+    crontab -u "$user" "$tmp" || true
+    rm -f "$tmp"
+  fi
+
+  local cron_left="0"
+  if command -v crontab >/dev/null 2>&1; then
+    if crontab -u "$user" -l 2>/dev/null | grep -Fq "autoupdate_release.sh"; then
+      cron_left="1"
+    fi
+  fi
+
+  if [[ "$user_systemd_ok" == "1" ]]; then
+    local unit_files
+    unit_files="$(XDG_RUNTIME_DIR="/run/user/${uid}" sudo -u "$user" systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null \
+      | awk '{print $1 ":" $2}' | grep -F 'alphacore-autoupdate@' || true)"
+    if [[ -n "${unit_files:-}" ]]; then
+      unit_files="${unit_files//$'\n'/ }"
+      echo "==> Autoupdate timers present for ${user}: ${unit_files}"
+    else
+      echo "==> Autoupdate timer not installed (expected; launch_validator.sh will install)."
+    fi
+  else
+    local wants_left="0"
+    if compgen -G "${wants_dir}/alphacore-autoupdate@*.timer" >/dev/null 2>&1; then
+      wants_left="1"
+    fi
+    if [[ -f "$service_path" || -f "$timer_path" || "$wants_left" == "1" ]]; then
+      echo "WARNING: Autoupdate unit files still present (user systemd unavailable)." >&2
+    else
+      echo "==> Autoupdate unit files removed; timer will be installed by launch_validator.sh."
+    fi
+  fi
+
+  local system_wants_left="0"
+  if compgen -G "${system_wants_dir}/alphacore-autoupdate@*.timer" >/dev/null 2>&1; then
+    system_wants_left="1"
+  fi
+  if [[ -f "$system_service_path" || -f "$system_timer_path" || "$system_wants_left" == "1" ]]; then
+    echo "WARNING: System-level autoupdate unit files still present." >&2
+  fi
+
+  if [[ "$cron_left" == "1" ]]; then
+    echo "WARNING: Autoupdate cron entries still present for ${user}." >&2
+  fi
+}
+
+if [[ -n "${PM2_USER:-}" ]]; then
+  PM2_HOME="$(getent passwd "$PM2_USER" | cut -d: -f6 || true)"
+  if [[ -n "${PM2_HOME:-}" && -d "$PM2_HOME" ]]; then
+    reset_autoupdate_timers "$PM2_USER" "$PM2_HOME" "$REPO_ROOT"
+  fi
+fi
+
+########################################
+# 1c. Install gcloud CLI
 ########################################
 if command -v gcloud >/dev/null 2>&1; then
   echo "==> gcloud already installed, skipping."
@@ -516,6 +653,11 @@ EOF
 # Expose terraform on the standard PATH inside the rootfs.
 mkdir -p "${ROOTFS_BUILD_DIR}/usr/local/bin"
 ln -sf /opt/acore-sandbox-bundle/bin/terraform "${ROOTFS_BUILD_DIR}/usr/local/bin/terraform"
+
+# Bake init payload into the rootfs so runtime injection is unnecessary.
+echo "==> Baking init payload into rootfs..."
+install -m 0755 "${SCRIPT_DIR}/init-sandbox.sh" "${ROOTFS_BUILD_DIR}/init-sandbox.sh"
+install -m 0755 "${SCRIPT_DIR}/net_checks.py" "${ROOTFS_BUILD_DIR}/acore-net-checks.py"
 
 # Create ext4 image
 dd if=/dev/zero of="${ACORE_ROOTFS_IMG}" bs=1M count="${ROOTFS_SIZE_MB}"

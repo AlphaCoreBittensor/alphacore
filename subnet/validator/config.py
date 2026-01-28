@@ -198,9 +198,9 @@ MINER_RESPONSE_TIMEOUT_SECONDS = _env_int(
 # while task execution can be much longer.  We will potentially be switching to a push/poll model.
 #
 # Defaults:
-#   - handshake: 5s
+#   - handshake: 90s
 #   - task synapse: 1800s (30 minutes)
-HANDSHAKE_TIMEOUT_SECONDS = 60
+HANDSHAKE_TIMEOUT_SECONDS = 90
 TASK_SYNAPSE_TIMEOUT_SECONDS = _env_int(
     "ALPHACORE_TASK_SYNAPSE_TIMEOUT_SECONDS", 600
 )
@@ -220,7 +220,8 @@ TIME_WEIGHT_BETA = _env_float(
 #   final = api_weight * api_score + latency_weight * latency_score
 # Where latency_score is in [0,1] based on relative latency within the round.
 API_SCORE_WEIGHT = _env_float("ALPHACORE_API_SCORE_WEIGHT", 0.8)
-LATENCY_SCORE_WEIGHT = _env_float("ALPHACORE_LATENCY_SCORE_WEIGHT", 0.2)
+# Default latency weight to 0.1 (10% of total score unless overridden).
+LATENCY_SCORE_WEIGHT = _env_float("ALPHACORE_LATENCY_SCORE_WEIGHT", 0.1)
 # Optional shaping for the relative latency score: score = (1 - normalized_delta) ** gamma
 LATENCY_SCORE_GAMMA = _env_float("ALPHACORE_LATENCY_SCORE_GAMMA", 1.0)
 

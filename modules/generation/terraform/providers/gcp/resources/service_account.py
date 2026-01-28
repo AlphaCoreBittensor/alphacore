@@ -47,5 +47,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_service_account,
             base_hints=("Expose a fresh service account for future bindings.",),
             weight=1.0,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

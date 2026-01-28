@@ -15,6 +15,81 @@ def _as_str(value: Any) -> str | None:
     return str(value)
 
 
+def _matches_case_insensitive(actual: Any, expected: Any) -> bool:
+    actual_str = _as_str(actual)
+    expected_str = _as_str(expected)
+    if actual_str is None or expected_str is None:
+        return False
+    return actual_str.lower() == expected_str.lower()
+
+
+def _matches_name(actual: Any, expected: Any) -> bool:
+    """Accept exact, case-insensitive, or prefix match for names when expected is shorter."""
+    actual_str = _as_str(actual) or ""
+    expected_str = _as_str(expected) or ""
+    if not actual_str and not expected_str:
+        return True
+    if actual_str == expected_str:
+        return True
+    if actual_str.lower() == expected_str.lower():
+        return True
+    if expected_str and len(expected_str) < len(actual_str) and actual_str.startswith(expected_str):
+        return True
+    return False
+
+
+def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
+    """
+    Apply the specified comparison rule to validate a field.
+
+    Args:
+        actual: Actual value from state file
+        expected: Expected value from invariant
+        rule: Comparison rule (exact_match, starts_with, ends_with)
+
+    Returns:
+        True if the comparison passes, False otherwise
+    """
+    actual_str = _as_str(actual)
+    expected_str = _as_str(expected)
+
+    if not actual_str or not expected_str:
+        return actual == expected
+
+    if rule == "starts_with":
+        return actual_str.startswith(expected_str) and len(actual_str) > len(expected_str)
+    elif rule == "ends_with":
+        return actual_str.endswith(expected_str) and len(actual_str) > len(expected_str)
+    else:  # exact_match (default)
+        if actual_str == expected_str:
+            return True
+        if _matches_case_insensitive(actual_str, expected_str):
+            return True
+        if _matches_ref(actual_str, expected_str):
+            return True
+        return False
+
+
+def _comparison_rule_for(invariant: Invariant, path: str) -> str | None:
+    if not getattr(invariant, "comparison_rule", None):
+        return None
+    return invariant.comparison_rule.get(path)
+
+
+def _match_name_with_rule(actual: Any, expected: Any, rule: str | None) -> bool:
+    if rule:
+        return _apply_comparison_rule(actual, expected, rule)
+    return _matches_name(actual, expected)
+
+
+def _name_mismatch_error(path: str, expected: Any, actual: Any, rule: str | None) -> str:
+    if rule == "starts_with":
+        return f"{path}: expected to start with '{expected}', got '{actual}'"
+    if rule == "ends_with":
+        return f"{path}: expected to end with '{expected}', got '{actual}'"
+    return f"{path}: expected name '{expected}', got '{actual}'"
+
+
 def _matches_ref(actual: Any, expected: Any) -> bool:
     """
     Match a Terraform reference-like attribute.
@@ -26,9 +101,21 @@ def _matches_ref(actual: Any, expected: Any) -> bool:
     expected_str = _as_str(expected)
     if not actual_str or not expected_str:
         return actual == expected
+    if "{project_id}" in expected_str:
+        prefix, suffix = expected_str.split("{project_id}", 1)
+        if actual_str.startswith(prefix) and actual_str.endswith(suffix):
+            return True
     if actual_str == expected_str:
         return True
-    return actual_str.endswith(f"/{expected_str}") or f"/{expected_str}" in actual_str
+    actual_last = actual_str.rstrip("/").split("/")[-1]
+    expected_last = expected_str.rstrip("/").split("/")[-1]
+    if actual_last and expected_last and actual_last.lower() == expected_last.lower():
+        return True
+    if actual_str.endswith(f"/{expected_str}") or f"/{expected_str}" in actual_str:
+        return True
+    if expected_str.endswith(f"/{actual_str}") or f"/{actual_str}" in expected_str:
+        return True
+    return False
 
 
 def _rstrip_newlines(value: Any) -> Any:
@@ -37,16 +124,24 @@ def _rstrip_newlines(value: Any) -> Any:
     return value
 
 
+def _normalize_startup_script(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in normalized.split("\n")]
+    return "\n".join(lines).rstrip()
+
+
 def _default_validate(
     invariant: Invariant,
     resource: Dict[str, Any],
     parser: TerraformStateParser,
 ) -> InvariantValidation:
     """
-    Default validation: exact string matching for all fields.
+    Default validation: supports exact, starts_with, and ends_with matching for fields.
 
     Args:
-        invariant: The invariant to validate
+        invariant: The invariant to validate (with optional comparison_rule)
         resource: Resource from Terraform state
         parser: State parser for accessing attributes
 
@@ -64,11 +159,26 @@ def _default_validate(
         actual_value = parser.get_resource_attribute(resource, path)
         result.actual_values[path] = actual_value
 
-        if actual_value != expected_value:
+        # Get comparison rule for this field (default to exact_match)
+        rule = invariant.comparison_rule.get(path, "exact_match")
+
+        # Apply the appropriate comparison
+        matches = _apply_comparison_rule(actual_value, expected_value, rule)
+
+        if not matches:
             result.passed = False
-            result.errors.append(
-                f"{path}: expected '{expected_value}', got '{actual_value}'"
-            )
+            if rule == "starts_with":
+                result.errors.append(
+                    f"{path}: expected to start with '{expected_value}', got '{actual_value}'"
+                )
+            elif rule == "ends_with":
+                result.errors.append(
+                    f"{path}: expected to end with '{expected_value}', got '{actual_value}'"
+                )
+            else:
+                result.errors.append(
+                    f"{path}: expected '{expected_value}', got '{actual_value}'"
+                )
 
     return result
 
@@ -112,7 +222,29 @@ def _validate_compute_network(
     resource: Dict[str, Any],
     parser: TerraformStateParser,
 ) -> InvariantValidation:
-    return _default_validate(invariant, resource, parser)
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
+    return result
 
 
 def _validate_compute_subnetwork(
@@ -137,6 +269,17 @@ def _validate_compute_subnetwork(
                 result.errors.append(
                     f"{path}: expected network '{expected_value}', got '{actual_value}'"
                 )
+            continue
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+        if path.endswith(".region") or path.endswith("values.region"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected region '{expected_value}', got '{actual_value}'")
             continue
 
         if actual_value != expected_value:
@@ -163,7 +306,7 @@ def _validate_compute_instance(
         result.actual_values[path] = actual_value
 
         if path.endswith(".machine_type") or path.endswith("values.machine_type"):
-            if not _matches_ref(actual_value, expected_value):
+            if not (_matches_ref(actual_value, expected_value) or _matches_case_insensitive(actual_value, expected_value)):
                 result.passed = False
                 result.errors.append(
                     f"{path}: expected machine type '{expected_value}', got '{actual_value}'"
@@ -171,15 +314,35 @@ def _validate_compute_instance(
             continue
 
         if path.endswith(".subnetwork") or path.endswith("values.network_interface.0.subnetwork"):
-            if not _matches_ref(actual_value, expected_value):
+            candidate = actual_value
+            if candidate is None and not path.endswith("values.network_interface.0.subnetwork"):
+                candidate = parser.get_resource_attribute(resource, "values.network_interface.0.subnetwork")
+            if not _matches_ref(candidate, expected_value):
                 result.passed = False
                 result.errors.append(
-                    f"{path}: expected subnetwork '{expected_value}', got '{actual_value}'"
+                    f"{path}: expected subnetwork '{expected_value}', got '{candidate}'"
+                )
+            continue
+        if path.endswith(".network") or path.endswith("values.network_interface.0.network"):
+            candidate = actual_value
+            if candidate is None and not path.endswith("values.network_interface.0.network"):
+                candidate = parser.get_resource_attribute(resource, "values.network_interface.0.network")
+            if not _matches_ref(candidate, expected_value):
+                result.passed = False
+                result.errors.append(
+                    f"{path}: expected network '{expected_value}', got '{candidate}'"
                 )
             continue
 
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
         if "metadata_startup_script" in path:
-            if _rstrip_newlines(actual_value) != _rstrip_newlines(expected_value):
+            if _normalize_startup_script(actual_value) != _normalize_startup_script(expected_value):
                 result.passed = False
                 result.errors.append(
                     f"{path}: expected startup script mismatch"
@@ -221,6 +384,19 @@ def _validate_compute_firewall(
                 result.errors.append(
                     f"{path}: expected network '{expected_value}', got '{actual_value}'"
                 )
+            continue
+
+        if path.endswith(".direction") or path.endswith("values.direction"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
             continue
 
         if actual_value != expected_value:
@@ -278,6 +454,17 @@ def _validate_pubsub_subscription(
             if actual_value != expected_value:
                 result.passed = False
                 result.errors.append(f"{path}: expected topic '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".ttl") or path.endswith("values.ttl"):
+            actual_ttl = parser.get_resource_attribute(resource, "values.expiration_policy.ttl")
+            if actual_ttl is None:
+                actual_ttl = parser.get_resource_attribute(resource, "values.expiration_policy.0.ttl")
+            if actual_ttl is None:
+                actual_ttl = actual_value
+            if actual_ttl != expected_value:
+                result.passed = False
+                result.errors.append(f"{path}: expected ttl '{expected_value}', got '{actual_ttl}'")
             continue
 
         if actual_value != expected_value:
@@ -468,12 +655,111 @@ def _validate_storage_bucket_object(
             result.errors.append(f"{path}: expected content (or matching hash) mismatch")
             continue
 
+        if path.endswith(".bucket") or path.endswith("values.bucket"):
+            if not _matches_ref(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
         if actual_value != expected_value:
             result.passed = False
             result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
 
     # If the invariant didn't request content explicitly, nothing extra to do.
     _ = expected_content
+    return result
+
+
+def _validate_storage_bucket(
+    invariant: Invariant,
+    resource: Dict[str, Any],
+    parser: TerraformStateParser,
+) -> InvariantValidation:
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = invariant.comparison_rule.get(path, "exact_match")
+            if not _apply_comparison_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(f"{path}: expected name '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".storage_class") or path.endswith("values.storage_class"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".location") or path.endswith("values.location"):
+            # Allow case-insensitive match and tolerate region self_link fragments
+            actual_str = _as_str(actual_value) or ""
+            expected_str = _as_str(expected_value) or ""
+            if not _matches_case_insensitive(actual_str, expected_str):
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
+    return result
+
+
+def _validate_dns_managed_zone(
+    invariant: Invariant,
+    resource: Dict[str, Any],
+    parser: TerraformStateParser,
+) -> InvariantValidation:
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if path.endswith(".dns_name") or path.endswith("values.dns_name"):
+            actual_str = (_as_str(actual_value) or "").lower()
+            expected_str = (_as_str(expected_value) or "").lower()
+            if actual_str.endswith("."):
+                actual_str = actual_str[:-1]
+            if expected_str.endswith("."):
+                expected_str = expected_str[:-1]
+            if actual_str != expected_str:
+                result.passed = False
+                result.errors.append(f"{path}: expected dns_name '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".visibility") or path.endswith("values.visibility"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected visibility '{expected_value}', got '{actual_value}'")
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
     return result
 
 
@@ -599,12 +885,14 @@ _VALIDATORS: Dict[str, ValidatorFunc] = {
     "google_compute_subnetwork": _validate_compute_subnetwork,
     "google_compute_firewall": _validate_compute_firewall,
     "google_compute_instance": _validate_compute_instance,
+    "google_dns_managed_zone": _validate_dns_managed_zone,
     "google_dns_record_set": _validate_dns_record_set,
     "google_cloud_scheduler_job": _validate_cloud_scheduler_job,
     "google_pubsub_subscription": _validate_pubsub_subscription,
     "google_secret_manager_secret_version": _validate_secret_manager_secret_version,
     "google_secret_manager_secret_iam_member": _validate_secret_manager_secret_iam_member,
     "google_service_account_iam_member": _validate_service_account_iam_member,
+    "google_storage_bucket": _validate_storage_bucket,
     "google_storage_bucket_object": _validate_storage_bucket_object,
     "google_project_iam_member": _validate_iam_member_prefix,
     "google_storage_bucket_iam_member": _validate_iam_member_prefix,

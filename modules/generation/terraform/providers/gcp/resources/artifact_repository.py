@@ -38,5 +38,6 @@ def get_templates() -> list[ResourceTemplate]:
             provides=("artifact_repository",),
             builder=_build_repository,
             base_hints=("Keep the repository minimal; ensure the package format matches the request.",),
+            naming_rules=("starts_with", "ends_with"),  # Repository IDs are project-scoped but often globally referenced
         )
     ]
