@@ -47,5 +47,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_secret,
             base_hints=("Create secret with at least one version.",),
             weight=0.9,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

@@ -47,6 +47,22 @@ class ResourceInstance:
 BuilderFn = Callable[[TemplateContext], ResourceInstance]
 
 
+def pick_naming_rule(template: "ResourceTemplate", rng: random.Random) -> str:
+    """
+    Pick a random allowed naming rule for a resource template.
+
+    Args:
+        template: The resource template
+        rng: Random number generator for deterministic selection
+
+    Returns:
+        One of: "exact_match", "starts_with", "ends_with"
+    """
+    if not template.naming_rules:
+        return "exact_match"
+    return rng.choice(template.naming_rules)
+
+
 @dataclass(frozen=True)
 class ResourceTemplate:
     """
@@ -59,6 +75,8 @@ class ResourceTemplate:
     - base_hints: static hints describing the resource's intent.
     - weight: sampling probability tweak for selection algorithms.
     - builder: callback that realises invariants and shared state.
+    - naming_rules: allowed comparison rules for name validation (exact_match, starts_with, ends_with).
+                    For globally unique resources, use ["starts_with", "ends_with"] only.
     """
 
     key: str
@@ -68,3 +86,4 @@ class ResourceTemplate:
     requires: Tuple[str, ...] = ()
     base_hints: Tuple[str, ...] = ()
     weight: float = 1.0
+    naming_rules: Tuple[str, ...] = ("exact_match",)  # Allowed: exact_match, starts_with, ends_with

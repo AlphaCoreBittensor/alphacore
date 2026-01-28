@@ -70,6 +70,7 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_basic_instance,
             base_hints=("Provision exactly one Compute Engine VM.",),
             weight=1.2,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         ),
         ResourceTemplate(
             key="compute_instance_networked",
@@ -79,5 +80,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_networked_instance,
             base_hints=("Use the dedicated VPC stack before adding the VM.",),
             weight=0.9,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         ),
     ]

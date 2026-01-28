@@ -232,20 +232,46 @@ class GCPDynamicTaskBank:
     def _realise_templates(
         self, order: List[str], task_id: str, nonce: str, validator_sa: str
     ) -> Tuple[List[Invariant], List[str]]:
+        from modules.generation.terraform.resource_templates import pick_naming_rule
+
         shared_state: Dict[str, Dict[str, Any]] = {}
         invariants: List[Invariant] = []
         hints: List[str] = []
         for key in order:
             template = self.templates[key]
             scoped_seed = f"{task_id}:{nonce}:{key}"
+            ctx_rng = random.Random(scoped_seed)
             ctx = TemplateContext(
-                rng=random.Random(scoped_seed),
+                rng=ctx_rng,
                 task_id=task_id,
                 nonce=nonce,
                 shared=shared_state,
                 validator_sa=validator_sa,
             )
             instance: ResourceInstance = template.builder(ctx)
+
+            # Apply naming rules to invariants based on template configuration
+            for invariant in instance.invariants:
+                if not template.naming_rules:
+                    continue
+
+                # Pick a naming rule for name/identifier fields
+                # Common patterns: values.name, values.repository_id, values.secret_id, etc.
+                name_fields = [
+                    "values.name",
+                    "values.repository_id",
+                    "values.secret_id",
+                    "values.service_account_id"
+                ]
+
+                for name_field in name_fields:
+                    if name_field in invariant.match:
+                        # Use the same RNG for deterministic rule selection
+                        rule = pick_naming_rule(template, ctx_rng)
+                        # Always set the rule explicitly for clarity (even if exact_match)
+                        invariant.comparison_rule[name_field] = rule
+                        break  # Only apply to first matching field
+
             invariants.extend(instance.invariants)
             hints.extend(template.base_hints)
             hints.extend(instance.prompt_hints)

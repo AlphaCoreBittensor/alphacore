@@ -34,8 +34,6 @@ providers:
         max_resources: 4
 
         # Composition families for multi-resource tasks
-        # Names must match modules.generation.terraform.providers.gcp.compositions.COMPOSITE_FAMILIES
-        # Disable any family that introduces service accounts or IAM bindings.
         families:
           network_stack:
             enabled: true
@@ -54,14 +52,14 @@ providers:
               - compute_instance_basic
 
           storage_delivery:
-            enabled: false
+            enabled: true
             resources:
               - storage_bucket
               - artifact_repository
               - pubsub_topic
 
           artifact_delivery:
-            enabled: false
+            enabled: true
             resources:
               - artifact_repository
               - storage_bucket
@@ -69,26 +67,25 @@ providers:
               - storage_bucket_object
 
           bucket_with_object:
-            enabled: false
+            enabled: true
             resources:
               - storage_bucket
               - storage_bucket_object
               - pubsub_topic
 
           network_plus_storage:
-            enabled: false
+            enabled: true
             resources:
               - vpc_network
               - subnetwork
               - firewall_rule
               - compute_instance_networked
-              # storage_bucket and artifact_repository disabled to avoid global name collisions
-              # - storage_bucket
-              # - storage_bucket_object
-              # - artifact_repository
+              - storage_bucket
+              - storage_bucket_object
+              - artifact_repository
 
           network_plus_artifacts:
-            enabled: false
+            enabled: true
             resources:
               - vpc_network
               - subnetwork
@@ -99,18 +96,18 @@ providers:
               - storage_bucket_object
 
           network_plus_pubsub:
-            enabled: false
+            enabled: true
             resources:
               - vpc_network
               - subnetwork
               - firewall_rule
               - compute_instance_networked
               - pubsub_topic
-              # - storage_bucket
-              # - storage_bucket_object
+              - storage_bucket
+              - storage_bucket_object
 
           storage_with_pubsub:
-            enabled: false
+            enabled: true
             resources:
               - storage_bucket
               - pubsub_topic
@@ -118,7 +115,7 @@ providers:
               - storage_bucket_object
 
           dns_frontend:
-            enabled: false
+            enabled: true
             resources:
               - dns_managed_zone
               - storage_bucket
@@ -126,7 +123,7 @@ providers:
               - pubsub_topic
 
           dns_network_bridge:
-            enabled: false
+            enabled: true
             resources:
               - dns_managed_zone
               - vpc_network
@@ -136,7 +133,7 @@ providers:
               - storage_bucket
 
           topic_with_subscription:
-            enabled: false
+            enabled: true
             resources:
               - pubsub_topic
               - pubsub_subscription

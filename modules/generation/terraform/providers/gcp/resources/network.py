@@ -36,5 +36,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_network,
             base_hints=("Use a dedicated VPC instead of default networks.",),
             weight=1.0,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]

@@ -37,5 +37,6 @@ def get_templates() -> list[ResourceTemplate]:
             builder=_build_dns_zone,
             base_hints=("Use Cloud DNS with a dedicated zone name.",),
             weight=0.8,
+            naming_rules=("starts_with", "ends_with", "exact_match"),
         )
     ]
