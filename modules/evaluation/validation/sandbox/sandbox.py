@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Optional
 
 RUNNER_SCRIPT = Path(__file__).with_name("terraform_runner.py")
-INIT_SCRIPT = Path(__file__).with_name("init-sandbox.sh")
 NET_CHECKS_SCRIPT = Path(__file__).with_name("net_checks.py")
+PAYLOAD_FILES = ("init-sandbox.sh", "acore-net-checks.py")
 CREDS_DEST = "gcp-creds.json"
 DEFAULT_VALIDATE_SCRIPT = Path(__file__).with_name("validate.py")
 DEFAULT_TAP_PREFIX = "acore-tap"
@@ -198,7 +198,31 @@ def hardlink_or_copy(src: Path, dst: Path) -> None:
     fast_copy(src, dst)
 
 
-def preflight(config: SandboxConfig, require_workspace_tools: bool, require_runner: bool, init_script: Path) -> None:
+def check_rootfs_payload(rootfs: Path) -> tuple[list[str], Optional[str]]:
+    """Return (missing_files, error_message) for baked init payload inside the rootfs image."""
+    mount_dir = Path(tempfile.mkdtemp(prefix="rootfs-check-"))
+    mounted = False
+    missing: list[str] = []
+    error: Optional[str] = None
+    try:
+        run(["mount", "-o", "loop,ro", str(rootfs), str(mount_dir)])
+        mounted = True
+        for name in PAYLOAD_FILES:
+            if not (mount_dir / name).exists():
+                missing.append(f"/{name}")
+    except subprocess.CalledProcessError as exc:
+        error = f"Failed to mount rootfs for payload check: {exc.stderr or exc.stdout or exc}"
+    finally:
+        if mounted:
+            try:
+                run(["umount", str(mount_dir)])
+            except subprocess.CalledProcessError as exc:
+                sys.stderr.write(f"Warning: failed to unmount rootfs check dir: {exc.stderr or exc.stdout or exc}\n")
+        shutil.rmtree(mount_dir, ignore_errors=True)
+    return missing, error
+
+
+def preflight(config: SandboxConfig, require_workspace_tools: bool, require_runner: bool) -> None:
     """Validate host prerequisites before attempting to launch Firecracker."""
     errors: list[str] = []
 
@@ -212,8 +236,15 @@ def preflight(config: SandboxConfig, require_workspace_tools: bool, require_runn
         errors.append(f"Kernel image missing at {config.kernel}")
     if not config.rootfs.exists():
         errors.append(f"Rootfs image missing at {config.rootfs}")
-    if not init_script.exists():
-        errors.append(f"Init script missing at {init_script}")
+    if config.rootfs.exists():
+        missing, check_error = check_rootfs_payload(config.rootfs)
+        if check_error:
+            errors.append(check_error)
+        elif missing:
+            errors.append(
+                "Rootfs missing baked payload files "
+                f"({', '.join(missing)}). Rebuild with setup.sh."
+            )
 
     tap_check = subprocess.run(["ip", "link", "show", config.acore_tap], capture_output=True)
     if tap_check.returncode != 0:
@@ -1063,7 +1094,6 @@ def main() -> int:
             config,
             require_workspace_tools=workspace_enabled,
             require_runner=workspace_enabled,
-            init_script=INIT_SCRIPT,
         )
         prepare_chroot(config)
 
@@ -1089,9 +1119,6 @@ def main() -> int:
             build_results_image(config)
             print("==> [Host] Preparing validator bundle image...")
             build_validator_image(validator_bundle_dir, config)
-
-        print("==> [Host] Injecting init script...")
-        inject_guest_payload(config, INIT_SCRIPT)
 
         print(f"==> [Host] Starting Firecracker (Logs -> {config.log_file})...")
         process = start_firecracker(config)

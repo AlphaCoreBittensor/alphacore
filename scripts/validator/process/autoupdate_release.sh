@@ -116,29 +116,6 @@ is_validator_round_active() {
   [[ -f "$lockfile" ]]
 }
 
-should_run_sandbox_setup() {
-  # Decide whether the host provisioning needs to be re-run.
-  # Prefer an explicit SETUP_VERSION stamp in the *target* commit; fallback to a "setup script changed" heuristic.
-  local from_sha="$1"
-  local to_sha="$2"
-  local installed_file="/var/lib/alphacore/sandbox_setup_version"
-
-  local desired=""
-  desired="$(git show "${to_sha}:modules/evaluation/validation/sandbox/SETUP_VERSION" 2>/dev/null | tr -d '\r\n\t ' || true)"
-
-  if [[ -n "$desired" ]]; then
-    local installed=""
-    if [[ -f "$installed_file" ]]; then
-      installed="$(tr -d '\r\n\t ' <"$installed_file" || true)"
-    fi
-    [[ "$desired" != "$installed" ]]
-    return
-  fi
-
-  # Heuristic: if setup.sh itself changed between the deployed and target SHAs.
-  git diff --name-only "${from_sha}..${to_sha}" | grep -q '^modules/evaluation/validation/sandbox/setup\.sh$'
-}
-
 refresh_validator_deps() {
   local venv="${VALIDATOR_VENV_DIR:-$REPO_ROOT/venv}"
   local req="$REPO_ROOT/modules/requirements.txt"
@@ -222,10 +199,7 @@ main() {
 
   log "Update available: $current_sha -> $target_sha"
 
-  local sandbox_setup_needed="0"
-  if should_run_sandbox_setup "$current_sha" "$target_sha"; then
-    sandbox_setup_needed="1"
-  fi
+  local sandbox_setup_needed="1"
 
   if [[ "$FORCE" != "1" ]]; then
     if is_validator_round_active; then
@@ -241,7 +215,7 @@ main() {
   fi
 
   if [[ "$DRY_RUN" == "1" ]]; then
-    log "--dry-run: would stop PM2 namespace '$PM2_NAMESPACE', reset to '$target_sha', refresh deps, and restart services."
+    log "--dry-run: would stop PM2 namespace '$PM2_NAMESPACE', reset to '$target_sha', run setup.sh, refresh deps, and restart services."
     exit 0
   fi
 
@@ -252,10 +226,8 @@ main() {
   git reset --hard "$target_sha"
 
   if [[ "$sandbox_setup_needed" == "1" ]]; then
-    log "Sandbox host setup required; running setup.sh (requires sudo)..."
+    log "Running setup.sh to refresh sandbox/rootfs (requires sudo)..."
     sudo bash "$REPO_ROOT/modules/evaluation/validation/sandbox/setup.sh"
-  else
-    log "Sandbox host setup not required."
   fi
 
   log "Refreshing validator Python deps (venv)..."

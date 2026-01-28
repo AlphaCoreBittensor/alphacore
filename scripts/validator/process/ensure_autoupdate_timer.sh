@@ -58,6 +58,11 @@ write_systemd_units() {
   local service_path="$unit_dir/alphacore-autoupdate@.service"
   local timer_path="$unit_dir/alphacore-autoupdate@.timer"
 
+  # Stop/disable any existing instance so a rewritten unit takes effect cleanly.
+  systemctl --user stop "alphacore-autoupdate@${PM2_NAMESPACE}.timer" >/dev/null 2>&1 || true
+  systemctl --user disable "alphacore-autoupdate@${PM2_NAMESPACE}.timer" >/dev/null 2>&1 || true
+  systemctl --user reset-failed "alphacore-autoupdate@${PM2_NAMESPACE}.timer" >/dev/null 2>&1 || true
+
   cat >"$service_path" <<EOF
 [Unit]
 Description=AlphaCore auto-update (%i)
@@ -67,9 +72,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=${REPO_ROOT}
-StandardOutput=append:${STATE_DIR}/%i.log
-StandardError=append:${STATE_DIR}/%i.log
-ExecStart=/bin/bash -lc 'bash ${REPO_ROOT}/scripts/validator/process/autoupdate_release.sh --config ${CONFIG_FILE}'
+ExecStart=/bin/bash -lc 'mkdir -p ${STATE_DIR}; bash ${REPO_ROOT}/scripts/validator/process/autoupdate_release.sh --config ${CONFIG_FILE} >> ${STATE_DIR}/%i.log 2>&1'
 EOF
 
   cat >"$timer_path" <<EOF
@@ -77,7 +80,7 @@ EOF
 Description=AlphaCore auto-update timer (%i)
 
 [Timer]
-OnBootSec=${INTERVAL}
+OnActiveSec=${INTERVAL}
 OnUnitActiveSec=${INTERVAL}
 RandomizedDelaySec=30
 Persistent=true
@@ -88,6 +91,21 @@ EOF
 
   systemctl --user daemon-reload
   systemctl --user enable --now "alphacore-autoupdate@${PM2_NAMESPACE}.timer"
+  # Ensure the timer is scheduled immediately after recreation.
+  systemctl --user restart "alphacore-autoupdate@${PM2_NAMESPACE}.timer" >/dev/null 2>&1 || true
+  next_elapse=""
+  for _ in 1 2 3 4 5; do
+    next_elapse="$(systemctl --user show -p NextElapseUSecRealtime --value "alphacore-autoupdate@${PM2_NAMESPACE}.timer" 2>/dev/null || true)"
+    if [[ -n "${next_elapse}" && "${next_elapse}" != "0" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ -z "${next_elapse}" || "${next_elapse}" == "0" ]]; then
+    warn "Timer did not report a next run; check user systemd availability."
+  fi
+  # Run once immediately so a log file is created and failures are visible.
+  systemctl --user start "alphacore-autoupdate@${PM2_NAMESPACE}.service" >/dev/null 2>&1 || true
   log "Enabled systemd user timer: alphacore-autoupdate@${PM2_NAMESPACE}.timer (interval=${INTERVAL})"
 }
 
