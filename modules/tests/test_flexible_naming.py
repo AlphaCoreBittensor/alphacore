@@ -30,23 +30,23 @@ class TestComparisonRules:
         """Test starts_with rule with matching prefix."""
         assert _apply_comparison_rule("my-bucket-user1-xyz", "my-bucket", "starts_with")
         assert _apply_comparison_rule("vm-test-production", "vm-test", "starts_with")
-        assert _apply_comparison_rule("my-bucket", "my-bucket", "starts_with")
 
     def test_starts_with_failure(self):
         """Test starts_with rule with non-matching prefix."""
         assert not _apply_comparison_rule("user1-my-bucket", "my-bucket", "starts_with")
         assert not _apply_comparison_rule("test-vm", "vm-test", "starts_with")
+        assert not _apply_comparison_rule("my-bucket", "my-bucket", "starts_with")
 
     def test_ends_with_success(self):
         """Test ends_with rule with matching suffix."""
         assert _apply_comparison_rule("user1-my-bucket", "my-bucket", "ends_with")
         assert _apply_comparison_rule("production-vm-test", "vm-test", "ends_with")
-        assert _apply_comparison_rule("my-bucket", "my-bucket", "ends_with")
 
     def test_ends_with_failure(self):
         """Test ends_with rule with non-matching suffix."""
         assert not _apply_comparison_rule("my-bucket-xyz", "my-bucket", "ends_with")
         assert not _apply_comparison_rule("vm-test-prod", "vm-test", "ends_with")
+        assert not _apply_comparison_rule("my-bucket", "my-bucket", "ends_with")
 
     def test_none_values(self):
         """Test comparison rules with None values."""

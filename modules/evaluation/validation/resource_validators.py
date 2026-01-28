@@ -57,9 +57,9 @@ def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
         return actual == expected
 
     if rule == "starts_with":
-        return actual_str.startswith(expected_str)
+        return actual_str.startswith(expected_str) and len(actual_str) > len(expected_str)
     elif rule == "ends_with":
-        return actual_str.endswith(expected_str)
+        return actual_str.endswith(expected_str) and len(actual_str) > len(expected_str)
     else:  # exact_match (default)
         if actual_str == expected_str:
             return True
@@ -68,6 +68,26 @@ def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
         if _matches_ref(actual_str, expected_str):
             return True
         return False
+
+
+def _comparison_rule_for(invariant: Invariant, path: str) -> str | None:
+    if not getattr(invariant, "comparison_rule", None):
+        return None
+    return invariant.comparison_rule.get(path)
+
+
+def _match_name_with_rule(actual: Any, expected: Any, rule: str | None) -> bool:
+    if rule:
+        return _apply_comparison_rule(actual, expected, rule)
+    return _matches_name(actual, expected)
+
+
+def _name_mismatch_error(path: str, expected: Any, actual: Any, rule: str | None) -> str:
+    if rule == "starts_with":
+        return f"{path}: expected to start with '{expected}', got '{actual}'"
+    if rule == "ends_with":
+        return f"{path}: expected to end with '{expected}', got '{actual}'"
+    return f"{path}: expected name '{expected}', got '{actual}'"
 
 
 def _matches_ref(actual: Any, expected: Any) -> bool:
@@ -214,9 +234,10 @@ def _validate_compute_network(
         result.actual_values[path] = actual_value
 
         if path.endswith(".name") or path.endswith("values.name"):
-            if not _matches_name(actual_value, expected_value):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
                 result.passed = False
-                result.errors.append(f"{path}: expected name '{expected_value}', got '{actual_value}'")
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
             continue
 
         if actual_value != expected_value:
@@ -250,9 +271,10 @@ def _validate_compute_subnetwork(
                 )
             continue
         if path.endswith(".name") or path.endswith("values.name"):
-            if not _matches_name(actual_value, expected_value):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
                 result.passed = False
-                result.errors.append(f"{path}: expected name '{expected_value}', got '{actual_value}'")
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
             continue
         if path.endswith(".region") or path.endswith("values.region"):
             if not _matches_case_insensitive(actual_value, expected_value):
@@ -313,9 +335,10 @@ def _validate_compute_instance(
             continue
 
         if path.endswith(".name") or path.endswith("values.name"):
-            if not _matches_name(actual_value, expected_value):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
                 result.passed = False
-                result.errors.append(f"{path}: expected name '{expected_value}', got '{actual_value}'")
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
             continue
 
         if "metadata_startup_script" in path:
@@ -370,9 +393,10 @@ def _validate_compute_firewall(
             continue
 
         if path.endswith(".name") or path.endswith("values.name"):
-            if not _matches_name(actual_value, expected_value):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
                 result.passed = False
-                result.errors.append(f"{path}: expected name '{expected_value}', got '{actual_value}'")
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
             continue
 
         if actual_value != expected_value:
@@ -708,9 +732,10 @@ def _validate_dns_managed_zone(
         result.actual_values[path] = actual_value
 
         if path.endswith(".name") or path.endswith("values.name"):
-            if not _matches_name(actual_value, expected_value):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
                 result.passed = False
-                result.errors.append(f"{path}: expected name '{expected_value}', got '{actual_value}'")
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
             continue
 
         if path.endswith(".dns_name") or path.endswith("values.dns_name"):
