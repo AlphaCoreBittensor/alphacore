@@ -37,7 +37,9 @@ def _networked_instance(ctx: TemplateContext) -> ResourceInstance:
     subnet = ctx.shared.get("subnetwork")
     if not subnet:
         raise RuntimeError("subnetwork capability missing for networked instance template.")
-    zone = subnet.get("zone") or subnet.get("region") + "-a"
+    # Enforce region/zone consistency: use subnet's region if present
+    region = subnet.get("region")
+    zone = subnet.get("zone") or (f"{region}-a" if region else None)
     name = f"vmnet-{ctx.nonce[:8]}"
     machine_type = helpers.pick_machine_type(ctx.rng)
     token = f"{ctx.task_id[:6]}-{ctx.nonce[:6]}"
@@ -57,7 +59,7 @@ def _networked_instance(ctx: TemplateContext) -> ResourceInstance:
     return ResourceInstance(
         invariants=[invariant],
         prompt_hints=[hint],
-        shared_values={"instance": {"name": name, "zone": zone}},
+        shared_values={"instance": {"name": name, "zone": zone, "region": region}},
     )
 
 
