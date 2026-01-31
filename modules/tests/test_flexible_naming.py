@@ -288,5 +288,240 @@ class TestValidationIntegration:
         assert len(result.errors) == 0
 
 
+class TestFullPathExtraction:
+    """Test validation with full GCP resource paths (e.g., projects/{project}/topics/{name})."""
+
+    def test_starts_with_extracts_last_path_segment(self):
+        """Test starts_with rule extracts last path segment from full GCP path."""
+        # Terraform state returns full path: projects/{project}/topics/{name}
+        # Invariant expects just the name prefix
+        assert _apply_comparison_rule(
+            "projects/my-project/topics/topic-abc123",
+            "topic-abc",
+            "starts_with"
+        )
+
+    def test_ends_with_extracts_last_path_segment(self):
+        """Test ends_with rule extracts last path segment from full GCP path."""
+        assert _apply_comparison_rule(
+            "projects/my-project/secrets/my-secret-xyz",
+            "xyz",
+            "ends_with"
+        )
+
+    def test_exact_match_with_full_path(self):
+        """Test exact_match works with full path when last segment matches."""
+        # Full path exact match compares last segments
+        assert _apply_comparison_rule(
+            "projects/my-project/topics/my-topic",
+            "my-topic",
+            "exact_match"
+        )
+
+    def test_starts_with_full_path_failure(self):
+        """Test starts_with fails when last segment doesn't start with expected."""
+        assert not _apply_comparison_rule(
+            "projects/my-project/topics/other-topic-abc",
+            "topic-abc",
+            "starts_with"
+        )
+
+    def test_ends_with_full_path_failure(self):
+        """Test ends_with fails when last segment doesn't end with expected."""
+        assert not _apply_comparison_rule(
+            "projects/my-project/secrets/my-secret-xyz",
+            "abc",
+            "ends_with"
+        )
+
+    def test_pubsub_topic_full_path(self):
+        """Test pubsub topic validation with full path from Terraform state."""
+        from modules.evaluation.validation.resource_validators import _validate_pubsub_topic
+        from modules.models import Invariant
+
+        inv = Invariant(
+            resource_type="google_pubsub_topic",
+            match={
+                "values.name": "my-topic",
+            },
+            comparison_rule={
+                "values.name": "starts_with",
+            },
+        )
+
+        # Terraform state returns full path
+        resource = {
+            "type": "google_pubsub_topic",
+            "values": {
+                "name": "projects/my-project-123/topics/my-topic-suffix",
+            },
+        }
+
+        class MockParser:
+            def get_resource_attribute(self, resource, path):
+                parts = path.split(".")
+                obj = resource
+                for part in parts:
+                    obj = obj.get(part, None)
+                    if obj is None:
+                        return None
+                return obj
+
+        parser = MockParser()
+        result = _validate_pubsub_topic(inv, resource, parser)
+
+        assert result.passed, f"Expected pass but got errors: {result.errors}"
+
+    def test_pubsub_subscription_full_path(self):
+        """Test pubsub subscription validation with full path from Terraform state."""
+        from modules.evaluation.validation.resource_validators import _validate_pubsub_subscription
+        from modules.models import Invariant
+
+        inv = Invariant(
+            resource_type="google_pubsub_subscription",
+            match={
+                "values.name": "my-sub",
+            },
+            comparison_rule={
+                "values.name": "ends_with",
+            },
+        )
+
+        # Terraform state returns full path
+        resource = {
+            "type": "google_pubsub_subscription",
+            "values": {
+                "name": "projects/my-project-123/subscriptions/prefix-my-sub",
+                "topic": "projects/my-project-123/topics/some-topic",
+            },
+        }
+
+        class MockParser:
+            def get_resource_attribute(self, resource, path):
+                parts = path.split(".")
+                obj = resource
+                for part in parts:
+                    obj = obj.get(part, None)
+                    if obj is None:
+                        return None
+                return obj
+
+        parser = MockParser()
+        result = _validate_pubsub_subscription(inv, resource, parser)
+
+        assert result.passed, f"Expected pass but got errors: {result.errors}"
+
+    def test_artifact_registry_repository_full_path(self):
+        """Test artifact registry repository validation with full path."""
+        from modules.evaluation.validation.resource_validators import _validate_artifact_registry_repository
+        from modules.models import Invariant
+
+        inv = Invariant(
+            resource_type="google_artifact_registry_repository",
+            match={
+                "values.repository_id": "my-repo",
+                "values.format": "DOCKER",
+                "values.location": "us-central1",
+            },
+            comparison_rule={
+                "values.repository_id": "starts_with",
+            },
+        )
+
+        resource = {
+            "type": "google_artifact_registry_repository",
+            "values": {
+                "repository_id": "my-repo-suffix123",
+                "name": "projects/my-project/locations/us-central1/repositories/my-repo-suffix123",
+                "format": "docker",  # Terraform may return lowercase
+                "location": "US-CENTRAL1",  # May be uppercase
+            },
+        }
+
+        class MockParser:
+            def get_resource_attribute(self, resource, path):
+                parts = path.split(".")
+                obj = resource
+                for part in parts:
+                    obj = obj.get(part, None)
+                    if obj is None:
+                        return None
+                return obj
+
+        parser = MockParser()
+        result = _validate_artifact_registry_repository(inv, resource, parser)
+
+        assert result.passed, f"Expected pass but got errors: {result.errors}"
+
+    def test_secret_manager_secret_full_path(self):
+        """Test secret manager secret validation with full path."""
+        from modules.evaluation.validation.resource_validators import _validate_secret_manager_secret
+        from modules.models import Invariant
+
+        inv = Invariant(
+            resource_type="google_secret_manager_secret",
+            match={
+                "values.secret_id": "app-secret",
+            },
+            comparison_rule={
+                "values.secret_id": "ends_with",
+            },
+        )
+
+        resource = {
+            "type": "google_secret_manager_secret",
+            "values": {
+                "secret_id": "prefix-app-secret",
+                "name": "projects/my-project/secrets/prefix-app-secret",
+            },
+        }
+
+        class MockParser:
+            def get_resource_attribute(self, resource, path):
+                parts = path.split(".")
+                obj = resource
+                for part in parts:
+                    obj = obj.get(part, None)
+                    if obj is None:
+                        return None
+                return obj
+
+        parser = MockParser()
+        result = _validate_secret_manager_secret(inv, resource, parser)
+
+        assert result.passed, f"Expected pass but got errors: {result.errors}"
+
+
+class TestMatchesRef:
+    """Test the _matches_ref function for full path matching."""
+
+    def test_matches_ref_full_path_to_simple_name(self):
+        """Test matching full path actual to simple expected name."""
+        from modules.evaluation.validation.resource_validators import _matches_ref
+
+        # Full path in actual, simple name in expected
+        assert _matches_ref(
+            "projects/my-project/topics/my-topic",
+            "my-topic"
+        )
+
+    def test_matches_ref_simple_to_simple(self):
+        """Test matching simple names."""
+        from modules.evaluation.validation.resource_validators import _matches_ref
+
+        assert _matches_ref("my-topic", "my-topic")
+        assert not _matches_ref("my-topic", "other-topic")
+
+    def test_matches_ref_full_path_to_full_path(self):
+        """Test matching full paths when last segments match."""
+        from modules.evaluation.validation.resource_validators import _matches_ref
+
+        # Different projects but same resource name
+        assert _matches_ref(
+            "projects/project-a/topics/shared-topic",
+            "projects/project-b/topics/shared-topic"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
