@@ -28,6 +28,20 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
+def _yaml_taskgen_max_tries(default: int) -> int:
+    try:
+        from modules.generation.yaml_config import get_yaml_config
+
+        cfg = get_yaml_config()
+        llm_cfg = getattr(getattr(cfg, "settings", None), "llm", None)
+        value = getattr(llm_cfg, "regen_max_attempts", None) if llm_cfg is not None else None
+        if value is None:
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
 def _normalized(value: str | None) -> str | None:
     if value is None:
         return None
@@ -130,6 +144,8 @@ PROMPTS_PER_USECASE = _env_int(
 # "one task per epoch" unless explicitly overridden.
 TASKS_PER_ROUND = _env_int("ALPHACORE_TASKS_PER_ROUND", 1)
 PROMPTS_PER_BATCH = _env_int("ALPHACORE_PROMPTS_PER_BATCH", 1)
+TASKGEN_MAX_TRIES = _env_int("ALPHACORE_TASKGEN_MAX_TRIES", _yaml_taskgen_max_tries(3))
+TASKGEN_RETRY_SLEEP_S = _env_float("ALPHACORE_TASKGEN_RETRY_SLEEP_S", 1.0)
 
 # Round phase timing (fraction of round for different phases) --------------- #
 
@@ -307,6 +323,8 @@ __all__ = [
     "PROMPTS_PER_USECASE",
     "TASKS_PER_ROUND",
     "PROMPTS_PER_BATCH",
+    "TASKGEN_MAX_TRIES",
+    "TASKGEN_RETRY_SLEEP_S",
     "STOP_TASK_EVALUATION_AT_ROUND_FRACTION",
     "FETCH_IPFS_AT_ROUND_FRACTION",
     "SKIP_ROUND_IF_STARTED_AFTER_FRACTION",

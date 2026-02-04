@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from modules.models import ACPolicy, ACTaskSpec, VerifyPlan
 from modules.generation.instructions import TaskInstructionGenerator
 from modules.generation.terraform.registry import terraform_task_registry
+from modules.generation.yaml_config import get_yaml_config
 
 DEFAULT_VALIDATOR_SA = os.getenv("ALPHACORE_VALIDATOR_SA", "validator@example.com")
 
@@ -32,7 +33,17 @@ class TaskGenerationPipeline:
         if not providers:
             raise RuntimeError("No Terraform task providers registered.")
         self.provider_weights = self._normalise_weights(provider_weights, providers)
-        self.instruction_generator = instruction_generator or TaskInstructionGenerator()
+        if instruction_generator is not None:
+            self.instruction_generator = instruction_generator
+        else:
+            llm_config = get_yaml_config().settings.llm
+            self.instruction_generator = TaskInstructionGenerator(
+                model=llm_config.model,
+                temperature=llm_config.temperature,
+                enable_llm=llm_config.enabled,
+                fallback_on_failure=llm_config.fallback_on_failure,
+                llm_retries=llm_config.retries,
+            )
 
     def generate(self) -> ACTaskSpec:
         """

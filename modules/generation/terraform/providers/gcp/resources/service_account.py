@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from modules.models import Invariant
+from modules.generation.terraform.providers.gcp import helpers
 from modules.generation.terraform.resource_templates import (
     ResourceInstance,
     ResourceTemplate,
@@ -10,11 +11,10 @@ from modules.generation.terraform.resource_templates import (
 
 def _build_service_account(ctx: TemplateContext) -> ResourceInstance:
     suffix = ctx.nonce[:8]
-    account_id = f"sa-{suffix}"
-    task_token = (ctx.task_id or "")[:12]
-    display_name = f"AlphaCore SA {task_token}".strip()
-    # Keep description stable and short; include a task-specific token without duplicating prefixes.
-    description = f"automation-sa-{suffix}"
+    account_id = helpers.service_account_id(suffix)
+    display_name = helpers.random_label(ctx.rng, min_len=8, max_len=16)
+    # Keep description stable and short; avoid resource-type hints.
+    description = helpers.random_label(ctx.rng, min_len=10, max_len=18)
 
     invariant = Invariant(
         resource_type="google_service_account",

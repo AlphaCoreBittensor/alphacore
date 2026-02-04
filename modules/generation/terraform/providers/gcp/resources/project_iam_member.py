@@ -16,7 +16,7 @@ def _bind_project_viewer(ctx: TemplateContext) -> ResourceInstance:
         prefix = "serviceAccount" if principal.endswith("gserviceaccount.com") else "user"
         member = f"{prefix}:{principal}"
     else:
-        member = f"serviceAccount:sa-{ctx.nonce[:8]}"
+        member = f"serviceAccount:{helpers.service_account_id(ctx.nonce[:8])}"
 
     invariant = Invariant(
         resource_type="google_project_iam_member",

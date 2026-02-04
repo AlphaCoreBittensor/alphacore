@@ -1,4 +1,5 @@
 import random
+import re
 
 from modules.generation.terraform.providers.gcp import helpers
 from modules.generation.terraform.providers.gcp.resources import (
@@ -33,12 +34,12 @@ class TestSecretManagerSecret:
 
     def test_secret_id_helper(self):
         secret_id = helpers.secret_id("abc123")
-        assert secret_id == "secret-abc123"
+        assert re.fullmatch(r"[a-z][a-z0-9]{7,23}", secret_id)
+        assert secret_id == helpers.secret_id("abc123")
 
     def test_secret_payload_helper(self):
         payload = helpers.secret_payload("testnonce12345678")
-        assert payload.startswith("acore-secret-")
-        assert "testnonce12345" in payload
+        assert re.fullmatch(r"[a-z0-9]{16,24}", payload)
 
 
 class TestSecretManagerSecretIAM:

@@ -17,7 +17,13 @@ import bittensor as bt
 
 from modules.generation import TaskGenerationPipeline
 from modules.models import ACTaskSpec
-from subnet.validator.config import TASKS_PER_ROUND, PRE_GENERATED_TASKS, VERBOSE_TASK_LOGGING
+from subnet.validator.config import (
+    TASKS_PER_ROUND,
+    PRE_GENERATED_TASKS,
+    VERBOSE_TASK_LOGGING,
+    TASKGEN_MAX_TRIES,
+    TASKGEN_RETRY_SLEEP_S,
+)
 from subnet.validator.task_ledger import TaskLedger
 
 
@@ -232,14 +238,13 @@ class TaskGenerationMixin:
             all_tasks: List[ACTaskSpec] = []
             try:
                 self._current_round_id = round_id or str(uuid4())
-                max_tries = int(os.getenv("ALPHACORE_TASKGEN_ON_DEMAND_MAX_TRIES", "20") or "20")
-                max_tries = max(1, max_tries)
-                retry_sleep_s = float(os.getenv("ALPHACORE_TASKGEN_ON_DEMAND_RETRY_SLEEP_S", "1.0") or "1.0")
-                retry_sleep_s = max(0.0, retry_sleep_s)
+                max_tries = max(1, int(TASKGEN_MAX_TRIES))
+                retry_sleep_s = max(0.0, float(TASKGEN_RETRY_SLEEP_S))
 
                 target_tasks = max(1, int(TASKS_PER_ROUND))
                 for task_index in range(target_tasks):
                     last_error: Optional[Exception] = None
+                    task_generated = False
                     for attempt in range(1, max_tries + 1):
                         started = time.time()
                         try:
@@ -264,6 +269,7 @@ class TaskGenerationMixin:
                             )
                             if VERBOSE_TASK_LOGGING:
                                 self._log_task_spec(task_spec, trace)
+                            task_generated = True
                             break
                         except Exception as exc:
                             last_error = exc
@@ -272,10 +278,11 @@ class TaskGenerationMixin:
                             )
                             if attempt < max_tries and retry_sleep_s > 0:
                                 await asyncio.sleep(retry_sleep_s)
-                    else:
-                        raise RuntimeError(
-                            f"Failed to generate task {task_index + 1}/{target_tasks} after {max_tries} attempts."
-                        ) from last_error
+                    if not task_generated:
+                        bt.logging.error(
+                            f"✗ Failed to generate task {task_index + 1}/{target_tasks} after {max_tries} attempts."
+                        )
+                        break
 
                     task_id = getattr(task_spec, "task_id", "") or ""
                     if task_id:
@@ -302,10 +309,12 @@ class TaskGenerationMixin:
                     f"✓ Generated {len(all_tasks)} tasks in {generation_time:.2f}s | "
                     f"round_id={self._current_round_id} | pool_remaining=0"
                 )
+                if not all_tasks:
+                    bt.logging.error("✗ Task generation produced no tasks; skipping dispatch for this round.")
                 return all_tasks
             except Exception as e:
                 bt.logging.error(f"✗ Task generation failed: {e}")
-                raise
+                return []
 
         # Refill pool if depleted
         await self._ensure_task_pool()
@@ -313,6 +322,9 @@ class TaskGenerationMixin:
         # Pull tasks from pool
         all_tasks: List[ACTaskSpec] = []
         tasks_to_generate = min(TASKS_PER_ROUND, len(self._task_pool))
+        if tasks_to_generate <= 0:
+            bt.logging.error("✗ Task pool empty; skipping dispatch for this round.")
+            return []
 
         try:
             for i in range(tasks_to_generate):
@@ -359,7 +371,7 @@ class TaskGenerationMixin:
 
         except Exception as e:
             bt.logging.error(f"✗ Task generation failed: {e}")
-            raise
+            return []
 
     async def _ensure_task_pool(self) -> None:
         """Ensure task pool is sufficiently filled."""
@@ -381,7 +393,24 @@ class TaskGenerationMixin:
                 return
             for i in range(to_generate):
                 started = time.time()
-                task_spec = self._generation_pipeline.generate()
+                task_spec = None
+                last_error: Optional[Exception] = None
+                for attempt in range(1, max(1, int(TASKGEN_MAX_TRIES)) + 1):
+                    try:
+                        task_spec = self._generation_pipeline.generate()
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        bt.logging.warning(
+                            f"Task pool generation attempt {attempt}/{TASKGEN_MAX_TRIES} failed: {exc}"
+                        )
+                        if attempt < TASKGEN_MAX_TRIES and TASKGEN_RETRY_SLEEP_S > 0:
+                            await asyncio.sleep(TASKGEN_RETRY_SLEEP_S)
+                if task_spec is None:
+                    bt.logging.error(
+                        f"✗ Task pool generation failed after {TASKGEN_MAX_TRIES} attempts: {last_error}"
+                    )
+                    continue
                 self._task_pool.append(task_spec)
                 elapsed_one = time.time() - started
                 epoch_meta = self._epoch_meta()

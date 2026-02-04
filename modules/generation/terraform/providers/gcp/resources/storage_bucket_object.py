@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from modules.models import Invariant
+from modules.generation.terraform.providers.gcp import helpers
 from modules.generation.terraform.resource_templates import (
     ResourceInstance,
     ResourceTemplate,
@@ -12,10 +13,10 @@ def _build_bucket_object(ctx: TemplateContext) -> ResourceInstance:
     bucket = ctx.shared.get("bucket")
     if not bucket:
         raise RuntimeError("storage_bucket_object template requires an existing bucket.")
-    object_name = f"artifact-{ctx.nonce[:10]}.txt"
+    object_name = helpers.bucket_object_name(ctx.rng)
     content_type = "text/plain"
     # Deterministic, task-specific payload so tasks don't all look identical.
-    content = f"alphacore-test-content-{ctx.nonce[:8]}"
+    content = helpers.random_text(ctx.rng, min_len=12, max_len=20)
     invariant = Invariant(
         resource_type="google_storage_bucket_object",
         match={

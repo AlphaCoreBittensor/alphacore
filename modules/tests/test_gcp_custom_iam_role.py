@@ -1,4 +1,5 @@
 import random
+import re
 
 from modules.generation.terraform.providers.gcp import helpers
 from modules.generation.terraform.providers.gcp.resources import (
@@ -32,7 +33,8 @@ class TestCustomIAMRole:
 
     def test_custom_role_id_helper(self):
         role_id = helpers.custom_role_id("ghi789")
-        assert role_id == "acore_role_ghi789"
+        assert re.fullmatch(r"[a-z][a-z0-9]{7,23}", role_id)
+        assert role_id == helpers.custom_role_id("ghi789")
 
     def test_custom_role_permissions_helper(self):
         perms = helpers.custom_role_permissions(random.Random(42))

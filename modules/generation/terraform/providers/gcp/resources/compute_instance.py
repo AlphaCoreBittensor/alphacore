@@ -10,7 +10,7 @@ from modules.generation.terraform.resource_templates import (
 
 
 def _basic_instance(ctx: TemplateContext) -> ResourceInstance:
-    name = f"vm-{ctx.nonce[:8]}"
+    name = helpers.rfc1035_name(ctx.rng)
     _, zone = helpers.pick_region_and_zone(ctx.rng)
     machine_type = helpers.pick_machine_type(ctx.rng)
     token = f"{ctx.task_id[:6]}-{ctx.nonce[:6]}"
@@ -40,7 +40,7 @@ def _networked_instance(ctx: TemplateContext) -> ResourceInstance:
     # Enforce region/zone consistency: use subnet's region if present
     region = subnet.get("region")
     zone = subnet.get("zone") or (f"{region}-a" if region else None)
-    name = f"vmnet-{ctx.nonce[:8]}"
+    name = helpers.rfc1035_name(ctx.rng)
     machine_type = helpers.pick_machine_type(ctx.rng)
     token = f"{ctx.task_id[:6]}-{ctx.nonce[:6]}"
     startup = helpers.startup_script(f"{token}-net", ctx.rng)

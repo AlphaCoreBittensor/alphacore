@@ -11,7 +11,7 @@ from modules.generation.terraform.resource_templates import (
 
 def _bind_sa_iam_member(ctx: TemplateContext) -> ResourceInstance:
     sa = ctx.shared.get("service_account")
-    account_id = (sa or {}).get("account_id") or f"sa-{ctx.nonce[:8]}"
+    account_id = (sa or {}).get("account_id") or helpers.service_account_id(ctx.nonce[:8])
 
     role = helpers.service_account_iam_role(ctx.rng)
     principal = (ctx.validator_sa or "").strip()
@@ -19,7 +19,7 @@ def _bind_sa_iam_member(ctx: TemplateContext) -> ResourceInstance:
         prefix = "serviceAccount" if principal.endswith("gserviceaccount.com") else "user"
         member = f"{prefix}:{principal}"
     else:
-        member = f"serviceAccount:accessor-{ctx.nonce[:8]}"
+        member = f"serviceAccount:{helpers.service_account_id(ctx.nonce[:8])}"
 
     invariant = Invariant(
         resource_type="google_service_account_iam_member",

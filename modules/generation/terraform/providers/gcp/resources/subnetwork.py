@@ -13,8 +13,7 @@ def _build_subnetwork(ctx: TemplateContext) -> ResourceInstance:
     network = ctx.shared.get("network")
     if not network:
         raise RuntimeError("network capability missing for subnetwork template.")
-    suffix = ctx.nonce[:6]
-    name = f"subnet-{suffix}"
+    name = helpers.rfc1035_name(ctx.rng)
     # If region is provided in shared context, use it; else pick randomly
     region = ctx.shared.get("region") or ctx.shared.get("subnetwork", {}).get("region")
     if not region:

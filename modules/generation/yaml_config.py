@@ -49,6 +49,9 @@ class LLMConfig:
     model: str = "gpt-4o-mini"
     temperature: float = 0.6
     fallback_on_failure: bool = False
+    retries: int = 3
+    regen_on_failure: bool = True
+    regen_max_attempts: int = 3
 
 
 @dataclass
@@ -132,7 +135,10 @@ class YamlTaskConfig:
             enabled=llm_data.get('enabled', True),
             model=llm_data.get('model', 'gpt-4o-mini'),
             temperature=llm_data.get('temperature', 0.6),
-            fallback_on_failure=llm_data.get('fallback_on_failure', False)
+            fallback_on_failure=llm_data.get('fallback_on_failure', False),
+            retries=llm_data.get('retries', 3),
+            regen_on_failure=llm_data.get('regen_on_failure', True),
+            regen_max_attempts=llm_data.get('regen_max_attempts', 3)
         )
 
         # Parse repository config

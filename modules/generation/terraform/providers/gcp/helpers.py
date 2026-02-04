@@ -15,6 +15,12 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 _SYSTEM_RANDOM = random.SystemRandom()
+_LOWER = "abcdefghijklmnopqrstuvwxyz"
+_DIGITS = "0123456789"
+_LOWER_DIGITS = _LOWER + _DIGITS
+_LOWER_DIGITS_ONLY = _LOWER_DIGITS
+_PUBSUB_BODY = _LOWER_DIGITS_ONLY
+_SINK_BODY = _LOWER_DIGITS_ONLY
 
 # Cheap regions/zones so miners can complete runs without incurring heavy spend.
 REGION_TO_ZONES: Dict[str, Tuple[str, ...]] = {
@@ -117,6 +123,120 @@ def new_suffix(length: int = 6) -> str:
     return secrets.token_hex(max(1, length // 2))
 
 
+def _rng_from_seed(seed: str) -> random.Random:
+    return random.Random(seed)
+
+
+def _random_string(rng: random.Random, length: int, alphabet: str) -> str:
+    return "".join(rng.choice(alphabet) for _ in range(length))
+
+
+def _random_name(
+    rng: random.Random,
+    length: int,
+    start_chars: str,
+    body_chars: str,
+    end_chars: Optional[str] = None,
+) -> str:
+    if length <= 0:
+        raise ValueError("length must be positive")
+    if length == 1:
+        end_chars = end_chars or start_chars
+        common = "".join(sorted(set(start_chars) & set(end_chars)))
+        pool = common or start_chars
+        return rng.choice(pool)
+    if length == 2:
+        return rng.choice(start_chars) + rng.choice(end_chars or body_chars)
+    middle_len = length - 2
+    return (
+        rng.choice(start_chars)
+        + _random_string(rng, middle_len, body_chars)
+        + rng.choice(end_chars or body_chars)
+    )
+
+
+def _random_name_with_range(
+    rng: random.Random,
+    min_len: int,
+    max_len: int,
+    start_chars: str,
+    body_chars: str,
+    end_chars: Optional[str] = None,
+) -> str:
+    length = rng.randint(min_len, max_len)
+    return _random_name(rng, length, start_chars, body_chars, end_chars)
+
+
+def _avoid_prefix(name: str, forbidden_prefix: str, rng: random.Random, start_chars: str) -> str:
+    if name.startswith(forbidden_prefix):
+        replacements = [c for c in start_chars if c != forbidden_prefix[0]]
+        if not replacements:
+            replacements = list(start_chars)
+        name = rng.choice(replacements) + name[1:]
+    return name
+
+
+def rfc1035_name(
+    rng: Optional[random.Random] = None, min_len: int = 6, max_len: int = 18
+) -> str:
+    """Generate a lowercase alphanumeric name (Compute, VPC, subnet, firewall, etc.)."""
+    rng = rng or _SYSTEM_RANDOM
+    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
+
+
+def dns_label(
+    rng: Optional[random.Random] = None, min_len: int = 4, max_len: int = 10
+) -> str:
+    """Generate a DNS label suitable for managed zones/record names."""
+    rng = rng or _SYSTEM_RANDOM
+    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
+
+
+def random_label(
+    rng: Optional[random.Random] = None, min_len: int = 8, max_len: int = 16
+) -> str:
+    """Neutral label for display/description fields without type hints."""
+    rng = rng or _SYSTEM_RANDOM
+    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS, _LOWER_DIGITS)
+
+
+def random_text(
+    rng: Optional[random.Random] = None,
+    min_len: int = 8,
+    max_len: int = 16,
+    alphabet: str = _LOWER_DIGITS,
+) -> str:
+    """Neutral short text payload (no vendor cues)."""
+    rng = rng or _SYSTEM_RANDOM
+    length = rng.randint(min_len, max_len)
+    return _random_string(rng, length, alphabet)
+
+
+def txt_rrdata(
+    rng: Optional[random.Random] = None, min_len: int = 6, max_len: int = 12
+) -> str:
+    """Quoted TXT record data."""
+    rng = rng or _SYSTEM_RANDOM
+    return f"\"{random_text(rng, min_len, max_len)}\""
+
+
+def service_account_id(suffix: str) -> str:
+    """Return a service account id without type-revealing prefixes."""
+    rng = _rng_from_seed(f"service-account:{suffix}")
+    return _random_name_with_range(rng, 8, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
+
+
+def bucket_object_name(
+    rng: Optional[random.Random] = None, extension: str = "txt"
+) -> str:
+    """Return a safe object name that doesn't encode the resource type."""
+    rng = rng or _SYSTEM_RANDOM
+    base = _random_name_with_range(rng, 8, 16, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
+    extension = extension.lstrip(".")
+    # Keep object names alphanumeric only.
+    return f"{base}{extension}"
+
+
 def pick_region_and_zone(rng: Optional[random.Random] = None) -> Tuple[str, str]:
     """Choose a cheap region and one of its zones."""
     rng = rng or _SYSTEM_RANDOM
@@ -133,8 +253,8 @@ def pick_machine_type(rng: Optional[random.Random] = None) -> str:
 
 def bucket_name(suffix: str) -> str:
     """Return a globally-unique bucket name derived from the suffix."""
-    base = f"acore-{suffix}".lower()
-    return base[:63]
+    rng = _rng_from_seed(f"bucket:{suffix}")
+    return _random_name_with_range(rng, 10, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def bucket_location(rng: Optional[random.Random] = None) -> str:
@@ -168,15 +288,20 @@ def artifact_format(rng: Optional[random.Random] = None) -> str:
 
 
 def artifact_repository_id(suffix: str) -> str:
-    return f"repo-{suffix}".lower()
+    rng = _rng_from_seed(f"artifact-repo:{suffix}")
+    return _random_name_with_range(rng, 6, 18, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def pubsub_topic_id(suffix: str) -> str:
-    return f"topic-{suffix}".lower()
+    rng = _rng_from_seed(f"pubsub-topic:{suffix}")
+    name = _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
+    return _avoid_prefix(name, "goog", rng, _LOWER)
 
 
 def pubsub_subscription_id(suffix: str) -> str:
-    return f"sub-{suffix}".lower()
+    rng = _rng_from_seed(f"pubsub-subscription:{suffix}")
+    name = _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
+    return _avoid_prefix(name, "goog", rng, _LOWER)
 
 
 def pubsub_retention_window(rng: Optional[random.Random] = None) -> str:
@@ -195,7 +320,8 @@ def pubsub_expiration_ttl(rng: Optional[random.Random] = None) -> str:
 
 
 def scheduler_job_name(suffix: str) -> str:
-    return f"job-{suffix}".lower()
+    rng = _rng_from_seed(f"scheduler-job:{suffix}")
+    return _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def scheduler_job_schedule(rng: Optional[random.Random] = None) -> str:
@@ -204,12 +330,14 @@ def scheduler_job_schedule(rng: Optional[random.Random] = None) -> str:
 
 
 def secret_id(suffix: str) -> str:
-    return f"secret-{suffix}".lower()
+    rng = _rng_from_seed(f"secret:{suffix}")
+    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def secret_payload(nonce: str) -> str:
     """Generate a simple secret payload from nonce."""
-    return f"acore-secret-{nonce[:16]}"
+    rng = _rng_from_seed(f"secret-payload:{nonce}")
+    return random_text(rng, 16, 24)
 
 
 def secret_iam_role(rng: Optional[random.Random] = None) -> str:
@@ -218,7 +346,8 @@ def secret_iam_role(rng: Optional[random.Random] = None) -> str:
 
 
 def logging_sink_name(suffix: str) -> str:
-    return f"sink-{suffix}".lower()
+    rng = _rng_from_seed(f"logging-sink:{suffix}")
+    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def logging_filter(rng: Optional[random.Random] = None) -> str:
@@ -227,7 +356,8 @@ def logging_filter(rng: Optional[random.Random] = None) -> str:
 
 
 def dns_zone_name(suffix: str) -> str:
-    return f"zone-{suffix}".lower()
+    rng = _rng_from_seed(f"dns-zone:{suffix}")
+    return _random_name_with_range(rng, 6, 14, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def dns_record_type(rng: Optional[random.Random] = None) -> str:
@@ -248,14 +378,15 @@ def dns_record_data(record_type: str, rng: Optional[random.Random] = None) -> li
     elif record_type == "CNAME":
         return ["example.com."]
     elif record_type == "TXT":
-        return [f'"v=alphacore-{rng.randint(1000, 9999)}"']
+        return [txt_rrdata(rng)]
     elif record_type == "MX":
         return [f"10 mail.example.com."]
     return ["192.0.2.1"]
 
 
 def custom_role_id(suffix: str) -> str:
-    return f"acore_role_{suffix}".lower()
+    rng = _rng_from_seed(f"custom-role:{suffix}")
+    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def custom_role_permissions(rng: Optional[random.Random] = None) -> list[str]:
@@ -297,10 +428,12 @@ __all__ = [
     "bucket_iam_role",
     "bucket_location",
     "bucket_name",
+    "bucket_object_name",
     "bucket_storage_class",
 
     "custom_role_id",
     "custom_role_permissions",
+    "dns_label",
     "dns_record_data",
     "dns_record_ttl",
     "dns_record_type",
@@ -317,13 +450,18 @@ __all__ = [
     "pubsub_retention_window",
     "pubsub_subscription_id",
     "pubsub_topic_id",
+    "random_label",
+    "random_text",
     "random_cidr_block",
     "random_firewall_profile",
+    "rfc1035_name",
     "scheduler_job_name",
     "scheduler_job_schedule",
     "secret_iam_role",
     "secret_id",
     "secret_payload",
+    "service_account_id",
     "service_account_iam_role",
     "startup_script",
+    "txt_rrdata",
 ]
