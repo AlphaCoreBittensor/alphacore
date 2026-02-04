@@ -1,4 +1,5 @@
 """Resource-specific validators for GCP resources."""
+from __future__ import annotations
 import base64
 from typing import Any, Callable, Dict
 
@@ -35,6 +36,21 @@ def _matches_name(actual: Any, expected: Any) -> bool:
         return True
     if expected_str and len(expected_str) < len(actual_str) and actual_str.startswith(expected_str):
         return True
+    # If the state stores a full resource path, compare against the basename.
+    actual_base = actual_str.rstrip("/").split("/")[-1] if actual_str else ""
+    expected_base = expected_str.rstrip("/").split("/")[-1] if expected_str else ""
+    if actual_base and expected_str:
+        if actual_base == expected_str or actual_base.lower() == expected_str.lower():
+            return True
+        if len(expected_str) < len(actual_base) and actual_base.startswith(expected_str):
+            return True
+    if actual_base and expected_base:
+        if actual_base == expected_base or actual_base.lower() == expected_base.lower():
+            return True
+        if len(expected_base) < len(actual_base) and actual_base.startswith(expected_base):
+            return True
+    if _matches_ref(actual_str, expected_str):
+        return True
     return False
 
 
@@ -57,9 +73,19 @@ def _apply_comparison_rule(actual: Any, expected: Any, rule: str) -> bool:
         return actual == expected
 
     if rule == "starts_with":
-        return actual_str.startswith(expected_str) and len(actual_str) > len(expected_str)
+        if actual_str.startswith(expected_str) and len(actual_str) > len(expected_str):
+            return True
+        actual_base = actual_str.rstrip("/").split("/")[-1] if actual_str else ""
+        if actual_base and actual_base != actual_str:
+            return actual_base.startswith(expected_str) and len(actual_base) > len(expected_str)
+        return False
     elif rule == "ends_with":
-        return actual_str.endswith(expected_str) and len(actual_str) > len(expected_str)
+        if actual_str.endswith(expected_str) and len(actual_str) > len(expected_str):
+            return True
+        actual_base = actual_str.rstrip("/").split("/")[-1] if actual_str else ""
+        if actual_base and actual_base != actual_str:
+            return actual_base.endswith(expected_str) and len(actual_base) > len(expected_str)
+        return False
     else:  # exact_match (default)
         if actual_str == expected_str:
             return True
@@ -317,21 +343,37 @@ def _validate_compute_instance(
             candidate = actual_value
             if candidate is None and not path.endswith("values.network_interface.0.subnetwork"):
                 candidate = parser.get_resource_attribute(resource, "values.network_interface.0.subnetwork")
-            if not _matches_ref(candidate, expected_value):
-                result.passed = False
-                result.errors.append(
-                    f"{path}: expected subnetwork '{expected_value}', got '{candidate}'"
-                )
+            rule = _comparison_rule_for(invariant, path)
+            if rule:
+                if not _apply_comparison_rule(candidate, expected_value, rule):
+                    result.passed = False
+                    result.errors.append(
+                        f"{path}: expected subnetwork '{expected_value}', got '{candidate}'"
+                    )
+            else:
+                if not _matches_ref(candidate, expected_value):
+                    result.passed = False
+                    result.errors.append(
+                        f"{path}: expected subnetwork '{expected_value}', got '{candidate}'"
+                    )
             continue
         if path.endswith(".network") or path.endswith("values.network_interface.0.network"):
             candidate = actual_value
             if candidate is None and not path.endswith("values.network_interface.0.network"):
                 candidate = parser.get_resource_attribute(resource, "values.network_interface.0.network")
-            if not _matches_ref(candidate, expected_value):
-                result.passed = False
-                result.errors.append(
-                    f"{path}: expected network '{expected_value}', got '{candidate}'"
-                )
+            rule = _comparison_rule_for(invariant, path)
+            if rule:
+                if not _apply_comparison_rule(candidate, expected_value, rule):
+                    result.passed = False
+                    result.errors.append(
+                        f"{path}: expected network '{expected_value}', got '{candidate}'"
+                    )
+            else:
+                if not _matches_ref(candidate, expected_value):
+                    result.passed = False
+                    result.errors.append(
+                        f"{path}: expected network '{expected_value}', got '{candidate}'"
+                    )
             continue
 
         if path.endswith(".name") or path.endswith("values.name"):
@@ -445,15 +487,25 @@ def _validate_pubsub_subscription(
         actual_value = parser.get_resource_attribute(resource, path)
         result.actual_values[path] = actual_value
 
-        if path.endswith(".topic") or path.endswith("values.topic"):
-            actual_str = _as_str(actual_value)
-            expected_str = _as_str(expected_value)
-            if actual_str and expected_str:
-                if actual_str == expected_str or actual_str.endswith(f"/topics/{expected_str}") or actual_str.endswith(f"/{expected_str}"):
-                    continue
-            if actual_value != expected_value:
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
                 result.passed = False
-                result.errors.append(f"{path}: expected topic '{expected_value}', got '{actual_value}'")
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if path.endswith(".topic") or path.endswith("values.topic"):
+            rule = _comparison_rule_for(invariant, path)
+            if rule:
+                if not _apply_comparison_rule(actual_value, expected_value, rule):
+                    result.passed = False
+                    result.errors.append(
+                        f"{path}: expected topic '{expected_value}' with rule '{rule}', got '{actual_value}'"
+                    )
+            else:
+                if not _matches_ref(actual_value, expected_value):
+                    result.passed = False
+                    result.errors.append(f"{path}: expected topic '{expected_value}', got '{actual_value}'")
             continue
 
         if path.endswith(".ttl") or path.endswith("values.ttl"):
@@ -465,6 +517,14 @@ def _validate_pubsub_subscription(
             if actual_ttl != expected_value:
                 result.passed = False
                 result.errors.append(f"{path}: expected ttl '{expected_value}', got '{actual_ttl}'")
+            continue
+
+        if path.endswith(".retain_acked_messages") or path.endswith("values.retain_acked_messages"):
+            actual_bool = False if actual_value is None else bool(actual_value)
+            expected_bool = bool(expected_value)
+            if actual_bool != expected_bool:
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_bool}', got '{actual_bool}'")
             continue
 
         if actual_value != expected_value:
@@ -656,6 +716,12 @@ def _validate_storage_bucket_object(
             continue
 
         if path.endswith(".bucket") or path.endswith("values.bucket"):
+            rule = _comparison_rule_for(invariant, path)
+            if rule:
+                if not _apply_comparison_rule(actual_value, expected_value, rule):
+                    result.passed = False
+                    result.errors.append(f"{path}: expected '{expected_value}' with rule '{rule}', got '{actual_value}'")
+                continue
             if not _matches_ref(actual_value, expected_value):
                 result.passed = False
                 result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
@@ -835,6 +901,169 @@ def _validate_cloud_scheduler_job(
     return result
 
 
+def _validate_pubsub_topic(
+    invariant: Invariant,
+    resource: Dict[str, Any],
+    parser: TerraformStateParser,
+) -> InvariantValidation:
+    """
+    Pub/Sub topics do not expose retain_acked_messages in state.
+
+    When invariants request retain_acked_messages=true as a proxy for explicit
+    retention, treat a matching message_retention_duration as satisfying it.
+    """
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if path.endswith(".message_retention_duration") or path.endswith("values.message_retention_duration"):
+            if actual_value != expected_value:
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".retain_acked_messages") or path.endswith("values.retain_acked_messages"):
+            # The topic resource does not surface this field; fall back to retention duration.
+            if actual_value is None:
+                if bool(expected_value) is True:
+                    expected_retention = invariant.match.get("values.message_retention_duration")
+                    actual_retention = parser.get_resource_attribute(
+                        resource, "values.message_retention_duration"
+                    )
+                    if expected_retention is None and actual_retention:
+                        continue
+                    if expected_retention is not None and actual_retention == expected_retention:
+                        continue
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+                continue
+            if actual_value != expected_value:
+                result.passed = False
+                result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
+    return result
+
+
+def _validate_artifact_registry_repository(
+    invariant: Invariant,
+    resource: Dict[str, Any],
+    parser: TerraformStateParser,
+) -> InvariantValidation:
+    """
+    Artifact Registry repository names can appear as full paths in state:
+    projects/{project}/locations/{region}/repositories/{repository_id}
+    
+    The repository_id field needs comparison_rule support (starts_with/ends_with).
+    """
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".repository_id") or path.endswith("values.repository_id"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            # Name field contains full path: projects/{project}/locations/{region}/repositories/{id}
+            # Extract the last segment for comparison
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if path.endswith(".format") or path.endswith("values.format"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected format '{expected_value}', got '{actual_value}'")
+            continue
+
+        if path.endswith(".location") or path.endswith("values.location"):
+            if not _matches_case_insensitive(actual_value, expected_value):
+                result.passed = False
+                result.errors.append(f"{path}: expected location '{expected_value}', got '{actual_value}'")
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
+    return result
+
+
+def _validate_secret_manager_secret(
+    invariant: Invariant,
+    resource: Dict[str, Any],
+    parser: TerraformStateParser,
+) -> InvariantValidation:
+    """
+    Secret Manager secret names appear as full paths in state:
+    projects/{project}/secrets/{name}
+    
+    The name field needs comparison_rule support and path extraction.
+    """
+    result = InvariantValidation(
+        resource_type=invariant.resource_type,
+        invariant_match=invariant.match,
+        passed=True,
+        actual_values={},
+    )
+
+    for path, expected_value in invariant.match.items():
+        actual_value = parser.get_resource_attribute(resource, path)
+        result.actual_values[path] = actual_value
+
+        if path.endswith(".secret_id") or path.endswith("values.secret_id"):
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if path.endswith(".name") or path.endswith("values.name"):
+            # Name field contains full path: projects/{project}/secrets/{name}
+            rule = _comparison_rule_for(invariant, path)
+            if not _match_name_with_rule(actual_value, expected_value, rule):
+                result.passed = False
+                result.errors.append(_name_mismatch_error(path, expected_value, actual_value, rule))
+            continue
+
+        if actual_value != expected_value:
+            result.passed = False
+            result.errors.append(f"{path}: expected '{expected_value}', got '{actual_value}'")
+
+    return result
+
+
 def _validate_project_iam_custom_role(
     invariant: Invariant,
     resource: Dict[str, Any],
@@ -888,7 +1117,10 @@ _VALIDATORS: Dict[str, ValidatorFunc] = {
     "google_dns_managed_zone": _validate_dns_managed_zone,
     "google_dns_record_set": _validate_dns_record_set,
     "google_cloud_scheduler_job": _validate_cloud_scheduler_job,
+    "google_pubsub_topic": _validate_pubsub_topic,
     "google_pubsub_subscription": _validate_pubsub_subscription,
+    "google_artifact_registry_repository": _validate_artifact_registry_repository,
+    "google_secret_manager_secret": _validate_secret_manager_secret,
     "google_secret_manager_secret_version": _validate_secret_manager_secret_version,
     "google_secret_manager_secret_iam_member": _validate_secret_manager_secret_iam_member,
     "google_service_account_iam_member": _validate_service_account_iam_member,

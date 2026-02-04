@@ -18,10 +18,9 @@ _SYSTEM_RANDOM = random.SystemRandom()
 _LOWER = "abcdefghijklmnopqrstuvwxyz"
 _DIGITS = "0123456789"
 _LOWER_DIGITS = _LOWER + _DIGITS
-_LOWER_DIGITS_DASH = _LOWER_DIGITS + "-"
-_LOWER_DIGITS_DASH_UNDERSCORE = _LOWER_DIGITS + "-_"
-_PUBSUB_BODY = _LOWER_DIGITS + "-_.~+%"
-_SINK_BODY = _LOWER_DIGITS + "-_."
+_LOWER_DIGITS_ONLY = _LOWER_DIGITS
+_PUBSUB_BODY = _LOWER_DIGITS_ONLY
+_SINK_BODY = _LOWER_DIGITS_ONLY
 
 # Cheap regions/zones so miners can complete runs without incurring heavy spend.
 REGION_TO_ZONES: Dict[str, Tuple[str, ...]] = {
@@ -180,9 +179,9 @@ def _avoid_prefix(name: str, forbidden_prefix: str, rng: random.Random, start_ch
 def rfc1035_name(
     rng: Optional[random.Random] = None, min_len: int = 6, max_len: int = 18
 ) -> str:
-    """Generate an RFC1035-compatible lowercase name (Compute, VPC, subnet, firewall, etc.)."""
+    """Generate a lowercase alphanumeric name (Compute, VPC, subnet, firewall, etc.)."""
     rng = rng or _SYSTEM_RANDOM
-    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def dns_label(
@@ -190,7 +189,7 @@ def dns_label(
 ) -> str:
     """Generate a DNS label suitable for managed zones/record names."""
     rng = rng or _SYSTEM_RANDOM
-    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    return _random_name_with_range(rng, min_len, max_len, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def random_label(
@@ -224,7 +223,7 @@ def txt_rrdata(
 def service_account_id(suffix: str) -> str:
     """Return a service account id without type-revealing prefixes."""
     rng = _rng_from_seed(f"service-account:{suffix}")
-    return _random_name_with_range(rng, 8, 20, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 8, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def bucket_object_name(
@@ -232,9 +231,10 @@ def bucket_object_name(
 ) -> str:
     """Return a safe object name that doesn't encode the resource type."""
     rng = rng or _SYSTEM_RANDOM
-    base = _random_name_with_range(rng, 8, 16, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    base = _random_name_with_range(rng, 8, 16, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
     extension = extension.lstrip(".")
-    return f"{base}.{extension}"
+    # Keep object names alphanumeric only.
+    return f"{base}{extension}"
 
 
 def pick_region_and_zone(rng: Optional[random.Random] = None) -> Tuple[str, str]:
@@ -254,7 +254,7 @@ def pick_machine_type(rng: Optional[random.Random] = None) -> str:
 def bucket_name(suffix: str) -> str:
     """Return a globally-unique bucket name derived from the suffix."""
     rng = _rng_from_seed(f"bucket:{suffix}")
-    return _random_name_with_range(rng, 10, 20, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 10, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def bucket_location(rng: Optional[random.Random] = None) -> str:
@@ -289,18 +289,18 @@ def artifact_format(rng: Optional[random.Random] = None) -> str:
 
 def artifact_repository_id(suffix: str) -> str:
     rng = _rng_from_seed(f"artifact-repo:{suffix}")
-    return _random_name_with_range(rng, 6, 18, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 6, 18, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def pubsub_topic_id(suffix: str) -> str:
     rng = _rng_from_seed(f"pubsub-topic:{suffix}")
-    name = _random_name_with_range(rng, 6, 20, _LOWER, _PUBSUB_BODY, _LOWER_DIGITS)
+    name = _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
     return _avoid_prefix(name, "goog", rng, _LOWER)
 
 
 def pubsub_subscription_id(suffix: str) -> str:
     rng = _rng_from_seed(f"pubsub-subscription:{suffix}")
-    name = _random_name_with_range(rng, 6, 20, _LOWER, _PUBSUB_BODY, _LOWER_DIGITS)
+    name = _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
     return _avoid_prefix(name, "goog", rng, _LOWER)
 
 
@@ -321,7 +321,7 @@ def pubsub_expiration_ttl(rng: Optional[random.Random] = None) -> str:
 
 def scheduler_job_name(suffix: str) -> str:
     rng = _rng_from_seed(f"scheduler-job:{suffix}")
-    return _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_DASH_UNDERSCORE, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 6, 20, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def scheduler_job_schedule(rng: Optional[random.Random] = None) -> str:
@@ -331,7 +331,7 @@ def scheduler_job_schedule(rng: Optional[random.Random] = None) -> str:
 
 def secret_id(suffix: str) -> str:
     rng = _rng_from_seed(f"secret:{suffix}")
-    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_DASH_UNDERSCORE, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def secret_payload(nonce: str) -> str:
@@ -347,7 +347,7 @@ def secret_iam_role(rng: Optional[random.Random] = None) -> str:
 
 def logging_sink_name(suffix: str) -> str:
     rng = _rng_from_seed(f"logging-sink:{suffix}")
-    return _random_name_with_range(rng, 8, 24, _LOWER, _SINK_BODY, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def logging_filter(rng: Optional[random.Random] = None) -> str:
@@ -357,7 +357,7 @@ def logging_filter(rng: Optional[random.Random] = None) -> str:
 
 def dns_zone_name(suffix: str) -> str:
     rng = _rng_from_seed(f"dns-zone:{suffix}")
-    return _random_name_with_range(rng, 6, 14, _LOWER, _LOWER_DIGITS_DASH, _LOWER_DIGITS)
+    return _random_name_with_range(rng, 6, 14, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def dns_record_type(rng: Optional[random.Random] = None) -> str:
@@ -386,7 +386,7 @@ def dns_record_data(record_type: str, rng: Optional[random.Random] = None) -> li
 
 def custom_role_id(suffix: str) -> str:
     rng = _rng_from_seed(f"custom-role:{suffix}")
-    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS + "_.", _LOWER_DIGITS)
+    return _random_name_with_range(rng, 8, 24, _LOWER, _LOWER_DIGITS_ONLY, _LOWER_DIGITS)
 
 
 def custom_role_permissions(rng: Optional[random.Random] = None) -> list[str]:

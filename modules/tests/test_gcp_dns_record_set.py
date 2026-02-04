@@ -1,4 +1,5 @@
 import random
+import re
 
 from modules.generation.terraform.providers.gcp import helpers
 from modules.generation.terraform.providers.gcp.resources import (
@@ -32,7 +33,8 @@ class TestDNSRecordSet:
 
     def test_dns_zone_name_helper(self):
         name = helpers.dns_zone_name("mno345")
-        assert name == "zone-mno345"
+        assert re.fullmatch(r"[a-z][a-z0-9]{5,13}", name)
+        assert name == helpers.dns_zone_name("mno345")
 
     def test_dns_record_ttl_helper(self):
         ttl = helpers.dns_record_ttl(random.Random(42))

@@ -256,9 +256,9 @@ class TestSubnetwork:
         template = subnetwork.get_templates()[0]
         assert "network" in template.requires
 
-    def test_subnetwork_with_network(self):
-        """Test subnetwork creation with network."""
-        shared = {"network": {"name": "net-test123"}}
+    def test_subnetwork_with_network_and_region(self):
+        """Test subnetwork creation with network and explicit region."""
+        shared = {"network": {"name": "net-test123"}, "region": "us-central1"}
         ctx = make_context(shared=shared)
         template = subnetwork.get_templates()[0]
         instance = template.builder(ctx)
@@ -267,6 +267,28 @@ class TestSubnetwork:
         invariant = instance.invariants[0]
         assert invariant.resource_type == "google_compute_subnetwork"
         assert "values.ip_cidr_range" in invariant.match
+        assert invariant.match["values.region"] == "us-central1"
+    def test_network_and_subnet_region_consistency(self):
+        """Test that subnet inherits region from shared context if provided."""
+        shared = {"network": {"name": "net-test123"}, "region": "europe-west1"}
+        ctx = make_context(shared=shared)
+        subnet_template = subnetwork.get_templates()[0]
+        subnet_instance = subnet_template.builder(ctx)
+        subnet_inv = subnet_instance.invariants[0]
+        assert subnet_inv.match["values.region"] == "europe-west1"
+    def test_networked_instance_region_consistency(self):
+        """Test that VM uses the same region/zone as its subnetwork."""
+        shared = {
+            "subnetwork": {"name": "subnet-test", "region": "asia-southeast1", "zone": "asia-southeast1-b"}
+        }
+        ctx = make_context(shared=shared)
+        templates = compute_instance.get_templates()
+        networked_template = next(t for t in templates if t.key == "compute_instance_networked")
+        instance = networked_template.builder(ctx)
+        inv = instance.invariants[0]
+        assert inv.match["values.zone"] == "asia-southeast1-b"
+        # If region is present, it should be in shared values
+        assert instance.shared_values["instance"]["region"] == "asia-southeast1"
 
 
 class TestFirewall:

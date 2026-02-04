@@ -14,7 +14,13 @@ def _build_subnetwork(ctx: TemplateContext) -> ResourceInstance:
     if not network:
         raise RuntimeError("network capability missing for subnetwork template.")
     name = helpers.rfc1035_name(ctx.rng)
-    region, zone = helpers.pick_region_and_zone(ctx.rng)
+    # If region is provided in shared context, use it; else pick randomly
+    region = ctx.shared.get("region") or ctx.shared.get("subnetwork", {}).get("region")
+    if not region:
+        region, zone = helpers.pick_region_and_zone(ctx.rng)
+    else:
+        # If region is provided, pick a zone in that region
+        zone = f"{region}-a"
     cidr = helpers.random_cidr_block(ctx.rng)
     invariant = Invariant(
         resource_type="google_compute_subnetwork",

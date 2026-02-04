@@ -1,4 +1,5 @@
 import random
+import re
 
 import pytest
 
@@ -47,4 +48,5 @@ class TestLoggingProjectSink:
 
     def test_logging_sink_name_helper(self):
         name = helpers.logging_sink_name("jkl012")
-        assert name == "sink-jkl012"
+        assert re.fullmatch(r"[a-z][a-z0-9]{7,23}", name)
+        assert name == helpers.logging_sink_name("jkl012")
