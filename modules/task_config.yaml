@@ -197,4 +197,7 @@ settings:
     enabled: true  # Set to false to use deterministic fallback
     model: gpt-5-mini
     temperature: 0.6
-    fallback_on_failure: true
+    fallback_on_failure: false
+    retries: 3
+    regen_on_failure: true
+    regen_max_attempts: 5

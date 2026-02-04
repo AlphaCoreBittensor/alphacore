@@ -64,7 +64,8 @@ class TaskGenerator:
                 model=llm_config.model,
                 temperature=llm_config.temperature,
                 enable_llm=llm_config.enabled,
-                fallback_on_failure=llm_config.fallback_on_failure
+                fallback_on_failure=llm_config.fallback_on_failure,
+                llm_retries=llm_config.retries
             )
 
         self._system_random = random.SystemRandom()
@@ -89,14 +90,22 @@ class TaskGenerator:
         elif not self.config.is_provider_enabled(provider):
             raise ValueError(f"Provider '{provider}' is not enabled in configuration")
 
-        # Pick task bank
-        task_bank_name = self._pick_random_task_bank(provider)
-
-        # Generate task
-        task = self._generate_terraform_task(provider, task_bank_name)
-
-        # Convert to ACTaskSpec
-        return self._to_ac_task_spec(task, provider)
+        llm_config = self.config.settings.llm
+        regen_on_failure = bool(getattr(llm_config, "regen_on_failure", False))
+        max_attempts = max(1, int(getattr(llm_config, "regen_max_attempts", 1) or 1))
+        last_error: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                task_bank_name = self._pick_random_task_bank(provider)
+                task = self._generate_terraform_task(provider, task_bank_name)
+                return self._to_ac_task_spec(task, provider)
+            except Exception as exc:
+                last_error = exc
+                if not regen_on_failure or attempt >= max_attempts - 1:
+                    raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("Task generation failed without a specific error.")
 
     def generate_single_resource_task(self, provider: str = "gcp") -> ACTaskSpec:
         """
@@ -111,8 +120,21 @@ class TaskGenerator:
         if not self.config.is_task_bank_enabled(provider, "single_resource"):
             raise RuntimeError(f"single_resource task bank not enabled for {provider}")
 
-        task = self._generate_terraform_task(provider, "single_resource")
-        return self._to_ac_task_spec(task, provider)
+        llm_config = self.config.settings.llm
+        regen_on_failure = bool(getattr(llm_config, "regen_on_failure", False))
+        max_attempts = max(1, int(getattr(llm_config, "regen_max_attempts", 1) or 1))
+        last_error: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                task = self._generate_terraform_task(provider, "single_resource")
+                return self._to_ac_task_spec(task, provider)
+            except Exception as exc:
+                last_error = exc
+                if not regen_on_failure or attempt >= max_attempts - 1:
+                    raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("Task generation failed without a specific error.")
 
     def generate_composite_task(self, provider: str = "gcp") -> ACTaskSpec:
         """
@@ -127,8 +149,21 @@ class TaskGenerator:
         if not self.config.is_task_bank_enabled(provider, "composite_resource"):
             raise RuntimeError(f"composite_resource task bank not enabled for {provider}")
 
-        task = self._generate_terraform_task(provider, "composite_resource")
-        return self._to_ac_task_spec(task, provider)
+        llm_config = self.config.settings.llm
+        regen_on_failure = bool(getattr(llm_config, "regen_on_failure", False))
+        max_attempts = max(1, int(getattr(llm_config, "regen_max_attempts", 1) or 1))
+        last_error: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                task = self._generate_terraform_task(provider, "composite_resource")
+                return self._to_ac_task_spec(task, provider)
+            except Exception as exc:
+                last_error = exc
+                if not regen_on_failure or attempt >= max_attempts - 1:
+                    raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("Task generation failed without a specific error.")
 
     # ------------------------------------------------------------------ #
     # Internal helpers

@@ -13,9 +13,11 @@ def _build_dns_record(ctx: TemplateContext) -> ResourceInstance:
     zone = ctx.shared.get("dns_zone")
     zone_name = (zone or {}).get("name") or helpers.dns_zone_name(ctx.nonce[:8])
     zone_dns = (zone or {}).get("dns_name") or f"{ctx.nonce[:6]}.acore.example."
+    zone_dns = zone_dns if zone_dns.endswith(".") else f"{zone_dns}."
 
     record_type = helpers.dns_record_type(ctx.rng)
-    record_name = f"test.{zone_dns}"
+    record_label = helpers.dns_label(ctx.rng)
+    record_name = f"{record_label}.{zone_dns}"
     ttl = helpers.dns_record_ttl(ctx.rng)
     # Deterministic, per-task record data so tasks don't all share the same placeholder.
     token = ctx.nonce[:6]
@@ -24,7 +26,7 @@ def _build_dns_record(ctx: TemplateContext) -> ResourceInstance:
     elif record_type == "CNAME":
         rrdatas = [f"alias-{token}.example.com."]
     elif record_type == "TXT":
-        rrdatas = [f"\"v=alphacore-{token}\""]
+        rrdatas = [helpers.txt_rrdata(ctx.rng)]
     elif record_type == "MX":
         rrdatas = [f"10 mail-{token}.example.com."]
     else:

@@ -13,9 +13,8 @@ def _build_firewall(ctx: TemplateContext) -> ResourceInstance:
     network = ctx.shared.get("network")
     if not network:
         raise RuntimeError("network capability missing for firewall template.")
-    suffix = ctx.nonce[:6]
     profile = helpers.random_firewall_profile(ctx.rng)
-    name = f"fw-{profile.label}-{suffix}"
+    name = helpers.rfc1035_name(ctx.rng)
     allow_match: dict[str, object] = {
         "values.allow.0.protocol": profile.allow_protocol,
     }

@@ -1115,6 +1115,11 @@ class Validator(
 				]
 			else:
 				tasks = await self._run_generation_phase(round_id=round_id)
+				if not tasks:
+					bt.logging.error(
+						f"✗ No tasks generated for round {round_id}; skipping dispatch."
+					)
+					return
 
 			# Phase 2: targets
 			targets: List[tuple[int, bt.AxonInfo]] = []

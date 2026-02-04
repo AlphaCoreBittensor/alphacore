@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from modules.models import Invariant
+from modules.generation.terraform.providers.gcp import helpers
 from modules.generation.terraform.resource_templates import (
     ResourceInstance,
     ResourceTemplate,
@@ -9,9 +10,8 @@ from modules.generation.terraform.resource_templates import (
 
 
 def _build_dns_zone(ctx: TemplateContext) -> ResourceInstance:
-    suffix = ctx.nonce[:6]
-    zone_name = f"zone-{suffix}"
-    dns_name = f"{suffix}.acore.example."
+    zone_name = helpers.dns_zone_name(ctx.nonce[:8])
+    dns_name = f"{zone_name}.acore.example."
 
     invariant = Invariant(
         resource_type="google_dns_managed_zone",

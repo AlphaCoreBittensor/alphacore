@@ -10,8 +10,7 @@ from modules.generation.terraform.resource_templates import (
 
 
 def _build_network(ctx: TemplateContext) -> ResourceInstance:
-    suffix = ctx.nonce[:6]
-    name = f"net-{suffix}"
+    name = helpers.rfc1035_name(ctx.rng)
     invariant = Invariant(
         resource_type="google_compute_network",
         match={

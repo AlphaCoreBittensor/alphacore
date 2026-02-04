@@ -50,6 +50,11 @@ PROVIDER_SYNONYMS = {
     "azure": ("azure", "microsoft azure"),
     "gcp": ("gcp", "google cloud", "google cloud platform"),
 }
+SUBMISSION_SENTENCES = (
+    "Submit a single zip archive of the repository; keep the Terraform config at the repository root and include terraform.tfstate at the repository root.",
+    "Bundle the repository into one zip archive for submission; keep Terraform at the repository root and include terraform.tfstate at the repository root.",
+    "Deliver one zip archive containing the repository with the Terraform config at the repository root and terraform.tfstate at the repository root.",
+)
 
 # Many invariant values are stable identifiers (names, regions, IDs). Some are
 # sentence-like descriptions that are easy for an LLM to paraphrase. For those,
@@ -492,11 +497,7 @@ class TaskInstructionGenerator:
             if validator_sa
             else ""
         )
-        submission_variants = [
-            "Submit a single zip archive of the repository; keep the Terraform config at the repository root and include terraform.tfstate at the repository root.",
-            "Bundle the repository into one zip archive for submission; keep Terraform at the repository root and include terraform.tfstate at the repository root.",
-            "Deliver one zip archive containing the repository with the Terraform config at the repository root and terraform.tfstate at the repository root.",
-        ]
+        submission_variants = list(SUBMISSION_SENTENCES)
         pinned_terms = list(self._pinned_terms_for_llm(task))
         random.shuffle(pinned_terms)
         # Present tokens comma-separated to discourage raw pipe-delimited dumps in the final prompt.
@@ -517,9 +518,10 @@ class TaskInstructionGenerator:
             - Keep it under 220 words and prefer imperative voice.
             - Produce plain sentences with no markdown or special formatting characters.
             - Do not add requirements or artefacts beyond what is described above.
+            - End with one final sentence in the exact format: "Tokens: <token1>, <token2>, ...". The Tokens sentence must list every required token verbatim, comma-separated, and may be the only place you group tokens.
 
             Hard constraint:
-            - Weave each of these tokens naturally into the sentences (do not group or list them; spread them across the prose): {pinned_terms_str}
+            - The Tokens sentence must contain every token exactly as written here: {pinned_terms_str}
 
             Verbatim sentences (include each sentence exactly once):
             - {verifier_sentence}
