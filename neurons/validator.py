@@ -659,7 +659,7 @@ class Validator(
 		else:
 			bt.logging.warning("KVM: /dev/kvm not found (virtualization disabled/unavailable)")
 
-	def _emit_top_k_weights(self, k: int = 5) -> bool:
+	def _emit_top_k_weights(self, k: int = 1) -> bool:
 		from subnet.validator.config import BURN_AMOUNT_PERCENTAGE, BURN_UID
 
 		scores = np.asarray(self.scores, dtype=np.float32)

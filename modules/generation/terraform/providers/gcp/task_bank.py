@@ -236,6 +236,7 @@ class GCPDynamicTaskBank:
 
         shared_state: Dict[str, Dict[str, Any]] = {}
         invariants: List[Invariant] = []
+        name_rule_by_token: Dict[str, str] = {}
         hints: List[str] = []
         for key in order:
             template = self.templates[key]
@@ -270,6 +271,9 @@ class GCPDynamicTaskBank:
                         rule = pick_naming_rule(template, ctx_rng)
                         # Always set the rule explicitly for clarity (even if exact_match)
                         invariant.comparison_rule[name_field] = rule
+                        expected_name = invariant.match.get(name_field)
+                        if isinstance(expected_name, str) and rule in ("starts_with", "ends_with"):
+                            name_rule_by_token[expected_name] = rule
                         break  # Only apply to first matching field
 
             invariants.extend(instance.invariants)
@@ -278,4 +282,15 @@ class GCPDynamicTaskBank:
             for capability in template.provides:
                 provided_values = instance.shared_values.get(capability, {})
                 shared_state[capability] = provided_values
+        # Propagate name comparison rules to reference fields that use the same identifier.
+        for invariant in invariants:
+            for path, expected_value in (invariant.match or {}).items():
+                if path in invariant.comparison_rule:
+                    continue
+                if not isinstance(expected_value, str):
+                    continue
+                rule = name_rule_by_token.get(expected_value)
+                if rule:
+                    invariant.comparison_rule[path] = rule
+
         return invariants, hints
