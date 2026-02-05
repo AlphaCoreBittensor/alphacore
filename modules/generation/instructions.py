@@ -500,7 +500,7 @@ class TaskInstructionGenerator:
         submission_variants = list(SUBMISSION_SENTENCES)
         pinned_terms = list(self._pinned_terms_for_llm(task))
         random.shuffle(pinned_terms)
-        # Present tokens comma-separated to discourage raw pipe-delimited dumps in the final prompt.
+        # Present tokens comma-separated for the LLM instruction list.
         pinned_terms_str = ", ".join(pinned_terms)
         base_user_prompt = textwrap.dedent(
             f"""
@@ -518,10 +518,10 @@ class TaskInstructionGenerator:
             - Keep it under 220 words and prefer imperative voice.
             - Produce plain sentences with no markdown or special formatting characters.
             - Do not add requirements or artefacts beyond what is described above.
-            - End with one final sentence in the exact format: "Tokens: <token1>, <token2>, ...". The Tokens sentence must list every required token verbatim, comma-separated, and may be the only place you group tokens.
+            - Do not append a token list or use labels like "Tokens:"; weave required identifiers into the natural sentences instead.
 
             Hard constraint:
-            - The Tokens sentence must contain every token exactly as written here: {pinned_terms_str}
+            - Your output must contain every token exactly as written here, without grouping them into a list: {pinned_terms_str}
 
             Verbatim sentences (include each sentence exactly once):
             - {verifier_sentence}

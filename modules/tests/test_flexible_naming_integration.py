@@ -4,7 +4,10 @@ Integration tests for flexible naming system - full generation and validation pi
 import pytest
 from modules.models import Invariant, TaskSpec, TerraformTask
 from modules.generation.terraform.providers.gcp.task_bank import GCPDynamicTaskBank
-from modules.generation.terraform.providers.gcp.compositions import SINGLE_RESOURCE_FAMILIES
+from modules.generation.terraform.providers.gcp.compositions import (
+    COMPOSITE_FAMILIES,
+    SINGLE_RESOURCE_FAMILIES,
+)
 from modules.generation.instructions import TaskInstructionGenerator
 from modules.evaluation.validation.resource_validators import _default_validate
 
@@ -519,6 +522,33 @@ class TestFlexibleNamingIntegration:
             }
             result = _default_validate(inv, valid_resource, parser)
             assert result.passed, f"ends_with validation failed: {result.errors}"
+
+    def test_bucket_object_inherits_bucket_name_rule(self):
+        """Bucket object references should inherit the bucket name comparison rule."""
+        family = next(
+            family for family in COMPOSITE_FAMILIES if family.name == "bucket_with_object"
+        )
+        bank = GCPDynamicTaskBank(
+            min_resources=2,
+            max_resources=2,
+            families=[family],
+        )
+
+        task = bank.build_task(validator_sa="test@example.com")
+        bucket_inv = next(
+            inv
+            for inv in task.spec.invariants
+            if inv.resource_type == "google_storage_bucket"
+        )
+        object_inv = next(
+            inv
+            for inv in task.spec.invariants
+            if inv.resource_type == "google_storage_bucket_object"
+        )
+
+        bucket_rule = bucket_inv.comparison_rule.get("values.name")
+        assert bucket_rule in ("starts_with", "ends_with")
+        assert object_inv.comparison_rule.get("values.bucket") == bucket_rule
 
         elif rule == "exact_match":
             # Should only accept exact name match

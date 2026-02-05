@@ -237,7 +237,7 @@ TIME_WEIGHT_BETA = _env_float(
 # Where latency_score is in [0,1] based on relative latency within the round.
 API_SCORE_WEIGHT = _env_float("ALPHACORE_API_SCORE_WEIGHT", 0.8)
 # Default latency weight to 0.1 (10% of total score unless overridden).
-LATENCY_SCORE_WEIGHT = _env_float("ALPHACORE_LATENCY_SCORE_WEIGHT", 0.1)
+LATENCY_SCORE_WEIGHT = _env_float("ALPHACORE_LATENCY_SCORE_WEIGHT", 0.0)
 # Optional shaping for the relative latency score: score = (1 - normalized_delta) ** gamma
 LATENCY_SCORE_GAMMA = _env_float("ALPHACORE_LATENCY_SCORE_GAMMA", 1.0)
 
