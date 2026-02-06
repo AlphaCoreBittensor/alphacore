@@ -226,6 +226,11 @@ LATENCY_SCORING_ENABLED = _str_to_bool(
     os.getenv("ALPHACORE_LATENCY_SCORING_ENABLED", "true" if TESTING else "false")
 )
 
+# Latency scoring mode:
+# - "winner_take_all": fastest miner(s) get full latency weight, others get 0.
+# - "relative": original normalized latency curve.
+LATENCY_SCORING_MODE = os.getenv("ALPHACORE_LATENCY_SCORING_MODE", "winner_take_all").strip().lower()
+
 # Exponential decay factor for latency penalty: final = base * exp(-beta * latency_seconds)
 TIME_WEIGHT_BETA = _env_float(
     "ALPHACORE_TIME_WEIGHT_BETA", 0.0 if TESTING else 0.01
@@ -237,7 +242,7 @@ TIME_WEIGHT_BETA = _env_float(
 # Where latency_score is in [0,1] based on relative latency within the round.
 API_SCORE_WEIGHT = _env_float("ALPHACORE_API_SCORE_WEIGHT", 0.8)
 # Default latency weight to 0.1 (10% of total score unless overridden).
-LATENCY_SCORE_WEIGHT = _env_float("ALPHACORE_LATENCY_SCORE_WEIGHT", 0.0)
+LATENCY_SCORE_WEIGHT = _env_float("ALPHACORE_LATENCY_SCORE_WEIGHT", 0.1)
 # Optional shaping for the relative latency score: score = (1 - normalized_delta) ** gamma
 LATENCY_SCORE_GAMMA = _env_float("ALPHACORE_LATENCY_SCORE_GAMMA", 1.0)
 

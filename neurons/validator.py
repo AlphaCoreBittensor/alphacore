@@ -47,7 +47,7 @@ from subnet.validator.handshake.mixin import HandshakeMixin
 from subnet.validator.feedback.mixin import FeedbackMixin
 from subnet.validator.settlement.mixin import SettlementMixin
 from subnet.protocol import TaskCleanupSynapse
-from subnet.validator.config import VALIDATION_API_ENABLED, VALIDATION_API_ENDPOINT
+from subnet.validator.config import VALIDATION_API_ENABLED, VALIDATION_API_ENDPOINT, VALIDATION_CONCURRENCY
 # Bittensor tempo (blocks per epoch)
 # 360 blocks * 12 seconds per block = 4320 seconds = 72 minutes per epoch
 DEFAULT_TEMPO = 360
@@ -1152,37 +1152,34 @@ class Validator(
 				return
 
 			# Phase 3: dispatch
-			responses = await self._run_dispatch_phase(tasks, targets=targets)
+			queue_size = max(1, int(VALIDATION_CONCURRENCY) * 4)
+			response_queue = asyncio.Queue(maxsize=queue_size)
+			dispatch_done = asyncio.Event()
+			evaluation_task = asyncio.create_task(
+				self._run_streaming_consensus_phase(
+					tasks=tasks,
+					response_queue=response_queue,
+					targets=targets,
+					dispatch_done=dispatch_done,
+				)
+			)
+			try:
+				await self._run_dispatch_phase(
+					tasks,
+					targets=targets,
+					result_queue=response_queue,
+				)
+			finally:
+				dispatch_done.set()
 
-			# Phase 5: evaluation (works for smoke zip responses)
-			scores = await self._run_consensus_phase(tasks, responses)
+			# Phase 5: evaluation (streamed; finalize after timeout)
+			scores = await evaluation_task
 			try:
 				self._weights_tasks_completed += len(tasks or [])
 			except Exception:
 				pass
 
-			# Phase 6: feedback (only for real UIDs on metagraph)
-			try:
-				latency_map = self.get_latencies(round_id) or {}
-				for task in tasks:
-					task_id = task.get("task_id") if isinstance(task, dict) else getattr(task, "task_id", "")
-					if not task_id:
-						continue
-					task_scores = {uid: float(scores.get(uid, 0.0)) for uid, _ in targets if uid >= 0}
-					task_latencies = {
-						uid: float(latency_map.get((uid, task_id), 0.0))
-						for uid, _ in targets
-						if uid >= 0
-					}
-					if task_scores:
-						await self.send_task_feedback(
-							round_id=round_id,
-							task_id=task_id,
-							scores=task_scores,
-							latencies=task_latencies,
-						)
-			except Exception as exc:
-				bt.logging.debug(f"Feedback skipped/failed: {exc}")
+			# Phase 6: feedback is handled during streaming evaluation.
 
 			# Phase 6b: cleanup (send validation results back to miners).
 			try:
