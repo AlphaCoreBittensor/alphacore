@@ -34,6 +34,7 @@ from subnet.validator.config import (
 )
 from subnet.validator.config import API_SCORE_WEIGHT, LATENCY_SCORE_WEIGHT, LATENCY_SCORE_GAMMA
 from subnet.validator.config import VALIDATION_CONCURRENCY, LATENCY_TIE_EPSILON_S, LATENCY_TIE_PENALTY_MAX
+from subnet.validator.config import LATENCY_SCORING_MODE
 from subnet.validator.task_ledger import TaskLedger
 
 
@@ -57,6 +58,201 @@ class TaskEvaluationMixin:
             self._task_ledger.write(event, payload)
         except Exception:
             return
+
+    async def _evaluate_task_response(
+        self,
+        uid: int,
+        task: ACTaskSpec | dict,
+        synapse: Optional[TaskSynapse],
+        round_id: str,
+    ) -> tuple[float, Optional[dict], dict]:
+        """
+        Evaluate a single task response and return (score, validation_payload, attempt_info).
+
+        This is shared by both batch and streaming evaluation paths.
+        """
+        task_id = (
+            task.get("task_id") if isinstance(task, dict) else getattr(task, "task_id", None)
+        )
+        if not task_id:
+            return 0.0, None, {"status": "missing_task_id"}
+
+        if synapse is None:
+            return 0.0, None, {"status": "no_response"}
+
+        zip_b64 = getattr(synapse, "workspace_zip_b64", None)
+        if not zip_b64:
+            return 0.0, None, {"status": "no_submission_zip"}
+
+        if isinstance(task, dict):
+            task_payload = dict(task)
+        else:
+            try:
+                from dataclasses import is_dataclass
+                task_payload = asdict(task) if is_dataclass(task) else {"task_id": task_id}
+            except Exception:
+                task_payload = {"task_id": task_id}
+
+        # Build the *validator-side* task.json which the sandbox uses for invariant checks.
+        # IMPORTANT: The sandbox validator expects invariants at top-level (see validate_task()).
+        validation_task_json: Optional[dict] = None
+        invariants_count = 0
+        # Preferred: use the validator's remembered per-round task.json (never trust miner payload).
+        try:
+            remembered = None
+            if hasattr(self, "get_validation_task_json"):
+                remembered = self.get_validation_task_json(round_id, task_id)  # type: ignore[attr-defined]
+            if isinstance(remembered, dict):
+                validation_task_json = remembered
+        except Exception:
+            pass
+        try:
+            params = task_payload.get("params") if isinstance(task_payload, dict) else None
+            if isinstance(params, dict):
+                validation_task_json = params.get("validation_task_json") or params.get("task_json")
+                if not isinstance(validation_task_json, dict):
+                    # Preferred: TaskGenerationPipeline embeds the canonical task schema under params.task.
+                    candidate = params.get("task")
+                    if isinstance(candidate, dict):
+                        validation_task_json = candidate
+        except Exception:
+            validation_task_json = None
+        if not isinstance(validation_task_json, dict):
+            # Fallback: try extracting invariants from the ACTaskSpec payload shape.
+            extracted_invariants = []
+            try:
+                params = task_payload.get("params") if isinstance(task_payload, dict) else None
+                if isinstance(params, dict):
+                    task_obj = params.get("task") or {}
+                    if isinstance(task_obj, dict):
+                        extracted_invariants = task_obj.get("invariants") or []
+            except Exception:
+                extracted_invariants = []
+            validation_task_json = {
+                "task_id": str(task_id),
+                "invariants": extracted_invariants if isinstance(extracted_invariants, list) else [],
+            }
+
+        # Ensure task_id is present and invariant count is tracked for debugging.
+        try:
+            if "task_id" not in validation_task_json:
+                validation_task_json["task_id"] = str(task_id)
+            if "miner_uid" not in validation_task_json:
+                validation_task_json["miner_uid"] = int(uid)
+            invariants = validation_task_json.get("invariants") if isinstance(validation_task_json, dict) else None
+            invariants_count = len(invariants) if isinstance(invariants, list) else 0
+        except Exception:
+            invariants_count = 0
+
+        if invariants_count <= 0:
+            return 0.0, None, {
+                "status": "missing_invariants",
+                "error": "validator_task_json_missing_invariants",
+            }
+
+        if not VALIDATION_API_ENABLED:
+            return 1.0, None, {"status": "api_disabled"}
+
+        score_value: Optional[float] = None
+        validation_payload: Optional[dict] = None
+        attempt: dict = {}
+
+        if self._validation_client is None:
+            self._validation_client = ValidationAPIClient(
+                endpoint=VALIDATION_API_ENDPOINT,
+                timeout=VALIDATION_API_TIMEOUT,
+                max_retries=VALIDATION_API_RETRIES,
+            )
+            await self._validation_client.connect()
+
+        if await self._validation_client.health_check():
+            tmp_dir = tempfile.mkdtemp(prefix=f"alphacore-eval-{uid}-{task_id}-")
+            zip_path = os.path.join(tmp_dir, "workspace.zip")
+            try:
+                raw = base64.b64decode(zip_b64)
+                with open(zip_path, "wb") as f:
+                    f.write(raw)
+                try:
+                    debug_validation = os.getenv("ALPHACORE_VALIDATION_DEBUG", "").strip().lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    )
+                    task_hash = ""
+                    try:
+                        task_hash = hashlib.sha256(
+                            json.dumps(validation_task_json, sort_keys=True, ensure_ascii=True).encode("utf-8")
+                        ).hexdigest()
+                    except Exception:
+                        task_hash = ""
+                    if debug_validation:
+                        bt.logging.info(
+                            f"VALIDATION_SUBMIT uid={uid} task_id={task_id} "
+                            f"invariants={invariants_count} "
+                            f"zip_sha256={getattr(synapse, 'workspace_zip_sha256', None)} "
+                            f"task_sha256={task_hash}"
+                        )
+                    validation_response_obj = await self._validation_client.submit_validation(
+                        workspace_zip_path=zip_path,
+                        task_json=validation_task_json,
+                        task_id=task_id,
+                        timeout_s=max(1, int(VALIDATION_API_TIMEOUT / 2)),
+                        net_checks=False,
+                        stream_log=False,
+                    )
+                    if validation_response_obj is not None:
+                        score_value = float(getattr(validation_response_obj, "score", 0.0))
+                        try:
+                            bt.logging.info(
+                                f"VALIDATION_JOB_SUBMITTED uid={int(uid)} task_id={str(task_id)} "
+                                f"job_id={getattr(validation_response_obj, 'job_id', '')} "
+                                f"log_path={getattr(validation_response_obj, 'log_path', '')} "
+                                f"log_url={getattr(validation_response_obj, 'log_url', '')} "
+                                f"submission_path={getattr(validation_response_obj, 'submission_path', '')} "
+                                f"invariants={int(invariants_count)} score={float(score_value):.4f}"
+                            )
+                        except Exception:
+                            pass
+                        validation_payload = {
+                            "job_id": getattr(validation_response_obj, "job_id", ""),
+                            "task_id": getattr(validation_response_obj, "task_id", None),
+                            "result": getattr(validation_response_obj, "result", {}) or {},
+                            "log_url": getattr(validation_response_obj, "log_url", ""),
+                            "log_path": getattr(validation_response_obj, "log_path", ""),
+                            "submission_path": getattr(validation_response_obj, "submission_path", ""),
+                            "tap": getattr(validation_response_obj, "tap", None),
+                        }
+                        attempt = {
+                            "status": "validated",
+                            "score": float(score_value),
+                            "job_id": getattr(validation_response_obj, "job_id", ""),
+                            "log_path": getattr(validation_response_obj, "log_path", ""),
+                            "invariants": int(invariants_count),
+                            "zip_sha256": getattr(synapse, "workspace_zip_sha256", None),
+                            "task_sha256": task_hash or None,
+                        }
+                    else:
+                        attempt = {"status": "api_returned_none"}
+                except Exception as exc:
+                    attempt = {
+                        "status": "api_error",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "invariants": int(invariants_count),
+                    }
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        else:
+            attempt = {"status": "api_unhealthy"}
+
+        if score_value is None:
+            score_value = 0.0 if VALIDATION_API_ENABLED else 1.0
+
+        if not attempt:
+            attempt = {"status": "unknown"}
+
+        return float(score_value), validation_payload, attempt
 
     async def _run_consensus_phase(
         self, tasks: List[ACTaskSpec], responses: dict
@@ -121,180 +317,12 @@ class TaskEvaluationMixin:
                             continue
 
                         synapse = by_task.get(task_id)
-                        if synapse is None:
-                            uid_attempts[str(task_id)] = {"status": "no_response"}
-                            uid_total_score += 0.0
-                            uid_eval_count += 1
-                            continue
-
-                        zip_b64 = getattr(synapse, "workspace_zip_b64", None)
-                        if not zip_b64:
-                            uid_attempts[str(task_id)] = {"status": "no_submission_zip"}
-                            uid_total_score += 0.0
-                            uid_eval_count += 1
-                            continue
-
-                        if isinstance(task, dict):
-                            task_payload = dict(task)
-                        else:
-                            try:
-                                from dataclasses import is_dataclass
-                                task_payload = asdict(task) if is_dataclass(task) else {"task_id": task_id}
-                            except Exception:
-                                task_payload = {"task_id": task_id}
-
-                        # Build the *validator-side* task.json which the sandbox uses for invariant checks.
-                        # IMPORTANT: The sandbox validator expects invariants at top-level (see validate_task()).
-                        validation_task_json: Optional[dict] = None
-                        invariants_count = 0
-                        # Preferred: use the validator's remembered per-round task.json (never trust miner payload).
-                        try:
-                            remembered = None
-                            if hasattr(self, "get_validation_task_json"):
-                                remembered = self.get_validation_task_json(round_id, task_id)  # type: ignore[attr-defined]
-                            if isinstance(remembered, dict):
-                                validation_task_json = remembered
-                        except Exception:
-                            pass
-                        try:
-                            params = task_payload.get("params") if isinstance(task_payload, dict) else None
-                            if isinstance(params, dict):
-                                validation_task_json = params.get("validation_task_json") or params.get("task_json")
-                                if not isinstance(validation_task_json, dict):
-                                    # Preferred: TaskGenerationPipeline embeds the canonical task schema under params.task.
-                                    candidate = params.get("task")
-                                    if isinstance(candidate, dict):
-                                        validation_task_json = candidate
-                        except Exception:
-                            validation_task_json = None
-                        if not isinstance(validation_task_json, dict):
-                            # Fallback: try extracting invariants from the ACTaskSpec payload shape.
-                            extracted_invariants = []
-                            try:
-                                params = task_payload.get("params") if isinstance(task_payload, dict) else None
-                                if isinstance(params, dict):
-                                    task_obj = params.get("task") or {}
-                                    if isinstance(task_obj, dict):
-                                        extracted_invariants = task_obj.get("invariants") or []
-                            except Exception:
-                                extracted_invariants = []
-                            validation_task_json = {
-                                "task_id": str(task_id),
-                                "invariants": extracted_invariants if isinstance(extracted_invariants, list) else [],
-                            }
-
-                        # Ensure task_id is present and invariant count is tracked for debugging.
-                        try:
-                            if "task_id" not in validation_task_json:
-                                validation_task_json["task_id"] = str(task_id)
-                            if "miner_uid" not in validation_task_json:
-                                validation_task_json["miner_uid"] = int(uid)
-                            invariants = validation_task_json.get("invariants") if isinstance(validation_task_json, dict) else None
-                            invariants_count = len(invariants) if isinstance(invariants, list) else 0
-                        except Exception:
-                            invariants_count = 0
-                        if invariants_count <= 0:
-                            uid_attempts[str(task_id)] = {
-                                "status": "missing_invariants",
-                                "error": "validator_task_json_missing_invariants",
-                            }
-                            uid_total_score += 0.0
-                            uid_eval_count += 1
-                            continue
-
-                        score_value: Optional[float] = None
-                        if not VALIDATION_API_ENABLED:
-                            uid_attempts[str(task_id)] = {"status": "api_disabled"}
-                            score_value = 1.0
-                        else:
-                            if self._validation_client is None:
-                                self._validation_client = ValidationAPIClient(
-                                    endpoint=VALIDATION_API_ENDPOINT,
-                                    timeout=VALIDATION_API_TIMEOUT,
-                                    max_retries=VALIDATION_API_RETRIES,
-                                )
-                                await self._validation_client.connect()
-
-                            if await self._validation_client.health_check():
-                                tmp_dir = tempfile.mkdtemp(prefix=f"alphacore-eval-{uid}-{task_id}-")
-                                zip_path = os.path.join(tmp_dir, "workspace.zip")
-                                try:
-                                    raw = base64.b64decode(zip_b64)
-                                    with open(zip_path, "wb") as f:
-                                        f.write(raw)
-                                    try:
-                                        debug_validation = os.getenv("ALPHACORE_VALIDATION_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
-                                        task_hash = ""
-                                        try:
-                                            task_hash = hashlib.sha256(
-                                                json.dumps(validation_task_json, sort_keys=True, ensure_ascii=True).encode("utf-8")
-                                            ).hexdigest()
-                                        except Exception:
-                                            task_hash = ""
-                                        if debug_validation:
-                                            bt.logging.info(
-                                                f"VALIDATION_SUBMIT uid={uid} task_id={task_id} "
-                                                f"invariants={invariants_count} "
-                                                f"zip_sha256={getattr(synapse, 'workspace_zip_sha256', None)} "
-                                                f"task_sha256={task_hash}"
-                                            )
-                                        validation_response_obj = await self._validation_client.submit_validation(
-                                            workspace_zip_path=zip_path,
-                                            task_json=validation_task_json,
-                                            task_id=task_id,
-                                            timeout_s=max(1, int(VALIDATION_API_TIMEOUT / 2)),
-                                            net_checks=False,
-                                            stream_log=False,
-                                        )
-                                        if validation_response_obj is not None:
-                                            score_value = float(getattr(validation_response_obj, "score", 0.0))
-                                            try:
-                                                bt.logging.info(
-                                                    f"VALIDATION_JOB_SUBMITTED uid={int(uid)} task_id={str(task_id)} "
-                                                    f"job_id={getattr(validation_response_obj, 'job_id', '')} "
-                                                    f"log_path={getattr(validation_response_obj, 'log_path', '')} "
-                                                    f"log_url={getattr(validation_response_obj, 'log_url', '')} "
-                                                    f"submission_path={getattr(validation_response_obj, 'submission_path', '')} "
-                                                    f"invariants={int(invariants_count)} score={float(score_value):.4f}"
-                                                )
-                                            except Exception:
-                                                pass
-                                            uid_validation[str(task_id)] = {
-                                                "job_id": getattr(validation_response_obj, "job_id", ""),
-                                                "task_id": getattr(validation_response_obj, "task_id", None),
-                                                "result": getattr(validation_response_obj, "result", {}) or {},
-                                                "log_url": getattr(validation_response_obj, "log_url", ""),
-                                                "log_path": getattr(validation_response_obj, "log_path", ""),
-                                                "submission_path": getattr(validation_response_obj, "submission_path", ""),
-                                                "tap": getattr(validation_response_obj, "tap", None),
-                                            }
-                                            uid_attempts[str(task_id)] = {
-                                                "status": "validated",
-                                                "score": float(score_value),
-                                                "job_id": getattr(validation_response_obj, "job_id", ""),
-                                                "log_path": getattr(validation_response_obj, "log_path", ""),
-                                                "invariants": int(invariants_count),
-                                                "zip_sha256": getattr(synapse, "workspace_zip_sha256", None),
-                                                "task_sha256": task_hash or None,
-                                            }
-                                        else:
-                                            uid_attempts[str(task_id)] = {"status": "api_returned_none"}
-                                    except Exception as exc:
-                                        uid_attempts[str(task_id)] = {
-                                            "status": "api_error",
-                                            "error_type": type(exc).__name__,
-                                            "error": str(exc),
-                                            "invariants": int(invariants_count),
-                                        }
-                                finally:
-                                    shutil.rmtree(tmp_dir, ignore_errors=True)
-                            else:
-                                uid_attempts[str(task_id)] = {"status": "api_unhealthy"}
-
-                        if score_value is None:
-                            # If API is disabled or unavailable, fail closed.
-                            score_value = 0.0 if VALIDATION_API_ENABLED else 1.0
-
+                        score_value, validation_payload, attempt = await self._evaluate_task_response(
+                            int(uid), task, synapse, round_id
+                        )
+                        uid_attempts[str(task_id)] = attempt
+                        if validation_payload:
+                            uid_validation[str(task_id)] = validation_payload
                         uid_total_score += float(score_value)
                         uid_eval_count += 1
                         uid_api_sum += float(score_value)
@@ -330,181 +358,414 @@ class TaskEvaluationMixin:
                     bt.logging.info(f"✗ UID {uid}: no valid evaluations")
 
             evaluation_time = time.time() - self._evaluation_start
-            valid_scores = sum(1 for s in scores_dict.values() if s > 0)
-            bt.logging.info(
-                f"✓ Evaluation completed in {evaluation_time:.2f}s | "
-                f"Valid scores: {valid_scores}/{len(scores_dict)}"
+            return self._finalize_scores(
+                round_id=round_id,
+                tasks=tasks,
+                scores_dict=scores_dict,
+                api_scores_by_uid=api_scores_by_uid,
+                api_counts_by_uid=api_counts_by_uid,
+                validation_by_uid=validation_by_uid,
+                validation_attempts_by_uid=validation_attempts_by_uid,
+                evaluation_time=evaluation_time,
             )
-
-            # Store per-task validation results for cleanup/inspection.
-            if validation_by_uid:
-                self._validation_results_by_round[round_id] = validation_by_uid
-            # Always store validation attempts, even when the API couldn't validate.
-            if validation_attempts_by_uid:
-                self._validation_attempts_by_round[round_id] = validation_attempts_by_uid
-
-            # Combine API score with relative latency score.
-            from subnet.validator.config import LATENCY_SCORING_ENABLED
-            final_scores = dict(scores_dict)
-            if LATENCY_SCORING_ENABLED and final_scores:
-                raw_latencies = self.get_latencies(round_id)
-                # Dispatch stores per-task latencies keyed by (uid, task_id).
-                # Convert to per-uid average.
-                latencies: dict[int, float] = {}
-                if isinstance(raw_latencies, dict):
-                    accum: dict[int, float] = {}
-                    counts: dict[int, int] = {}
-                    for key, value in raw_latencies.items():
-                        if isinstance(key, tuple) and len(key) == 2:
-                            uid_key = key[0]
-                        else:
-                            uid_key = key
-                        try:
-                            uid_int = int(uid_key)
-                        except Exception:
-                            continue
-                        try:
-                            v = float(value)
-                        except Exception:
-                            v = 0.0
-                        accum[uid_int] = accum.get(uid_int, 0.0) + v
-                        counts[uid_int] = counts.get(uid_int, 0) + 1
-                    for uid_int, total in accum.items():
-                        denom = max(1, int(counts.get(uid_int, 1)))
-                        latencies[uid_int] = total / float(denom)
-
-                # Relative latency scores are computed across miners that have a score.
-                uid_list = [int(uid) for uid in final_scores.keys()]
-                observed_latency_values = [
-                    float(latencies[uid]) for uid in uid_list if uid in latencies
-                ]
-                min_latency = min(observed_latency_values) if observed_latency_values else 0.0
-                max_latency = max(observed_latency_values) if observed_latency_values else min_latency
-                latency_range = float(max_latency - min_latency)
-                denom = max(1e-9, latency_range)
-
-                api_w = float(API_SCORE_WEIGHT)
-                lat_w = float(LATENCY_SCORE_WEIGHT)
-                total_w = api_w + lat_w
-                if total_w <= 0:
-                    api_w, lat_w, total_w = 1.0, 0.0, 1.0
-                api_w /= total_w
-                lat_w /= total_w
-
-                gamma = max(0.0001, float(LATENCY_SCORE_GAMMA))
-                tie_eps = max(0.0, float(LATENCY_TIE_EPSILON_S))
-                tie_penalty = max(0.0, min(1.0, float(LATENCY_TIE_PENALTY_MAX)))
-
-                tie_mode = bool(len(observed_latency_values) >= 2 and latency_range <= tie_eps and tie_penalty > 0.0)
-                tie_latency_scores: dict[int, float] = {}
-                if tie_mode:
-                    uid_sorted = sorted(
-                        uid_list,
-                        key=lambda u: (float(latencies.get(int(u), max_latency)), int(u)),
-                    )
-                    n = len(uid_sorted)
-                    if n > 1:
-                        for rank, uid in enumerate(uid_sorted):
-                            frac = float(rank) / float(n - 1)
-                            tie_latency_scores[int(uid)] = max(0.0, min(1.0, 1.0 - frac * tie_penalty))
-                    else:
-                        tie_latency_scores[int(uid_sorted[0])] = 1.0
-                    bt.logging.info(
-                        f"⏱️ Latency tie-spread enabled: range={latency_range:.6f}s <= eps={tie_eps:.6f}s "
-                        f"penalty_max={tie_penalty:.3f}"
-                    )
-
-                combined: dict[int, float] = {}
-                for uid in uid_list:
-                    api_sum = float(api_scores_by_uid.get(uid, 0.0))
-                    api_cnt = max(1, int(api_counts_by_uid.get(uid, 0)))
-                    api_avg = api_sum / float(api_cnt)
-
-                    # If the validator API score is 0, the overall score must be 0 (fail closed),
-                    # regardless of how fast the miner responded.
-                    if api_avg <= 0.0:
-                        combined[uid] = 0.0
-                        bt.logging.info(
-                            f"📊 UID {uid}: api=0.0000 -> final=0.0000 (latency ignored)"
-                        )
-                        continue
-
-                    if uid in latencies:
-                        latency = float(latencies.get(uid, 0.0))
-                    else:
-                        latency = float(max_latency)
-                    if tie_mode:
-                        latency_score = float(tie_latency_scores.get(int(uid), 1.0))
-                    else:
-                        delta = (latency - min_latency) / denom
-                        delta = max(0.0, min(1.0, float(delta)))
-                        latency_score = float((1.0 - delta) ** gamma)
-
-                    combined_score = api_w * float(api_avg) + lat_w * float(latency_score)
-                    combined[uid] = max(0.0, min(1.0, float(combined_score)))
-
-                    bt.logging.info(
-                        f"📊 UID {uid}: api={api_avg:.4f} latency={latency:.6f}s ({latency*1000.0:.1f}ms) "
-                        f"lat_score={latency_score:.4f} final={combined[uid]:.4f} "
-                        f"(weights api={api_w:.2f} lat={lat_w:.2f})"
-                    )
-
-                final_scores = combined
-
-            self._scores_by_round[round_id] = final_scores
-            try:
-                # Recompute per-uid average latency for reporting (same logic as above).
-                raw_latencies = self.get_latencies(round_id)
-                latencies: dict[int, float] = {}
-                if isinstance(raw_latencies, dict):
-                    accum: dict[int, float] = {}
-                    counts: dict[int, int] = {}
-                    for key, value in raw_latencies.items():
-                        if isinstance(key, tuple) and len(key) == 2:
-                            uid_key = key[0]
-                        else:
-                            uid_key = key
-                        try:
-                            uid_int = int(uid_key)
-                        except Exception:
-                            continue
-                        try:
-                            v = float(value)
-                        except Exception:
-                            v = 0.0
-                        accum[uid_int] = accum.get(uid_int, 0.0) + v
-                        counts[uid_int] = counts.get(uid_int, 0) + 1
-                    for uid_int, total in accum.items():
-                        denom = max(1, int(counts.get(uid_int, 1)))
-                        latencies[uid_int] = total / float(denom)
-
-                self._ledger(
-                    "evaluation_complete",
-                    {
-                        "round_id": round_id,
-                        "evaluation_time_s": float(evaluation_time),
-                        "valid_scores": int(valid_scores),
-                        "validation_attempts": validation_attempts_by_uid,
-                        "scores": [
-                            {
-                                "uid": int(uid),
-                                "api_sum": float(api_scores_by_uid.get(int(uid), 0.0)),
-                                "api_count": int(api_counts_by_uid.get(int(uid), 0)),
-                                "avg_latency_s": float(latencies.get(int(uid), 0.0)),
-                                "final_score": float(final_scores.get(int(uid), 0.0)),
-                                "validation": validation_by_uid.get(int(uid), {}),
-                            }
-                            for uid in sorted(final_scores.keys(), key=lambda u: int(u))
-                        ],
-                    },
-                )
-            except Exception:
-                pass
-            return final_scores
 
         except Exception as e:
             bt.logging.error(f"✗ Consensus phase failed: {e}")
             raise
+
+    async def _run_streaming_consensus_phase(
+        self,
+        tasks: List[ACTaskSpec],
+        response_queue: asyncio.Queue,
+        targets: list[tuple[int, bt.AxonInfo]],
+        dispatch_done: asyncio.Event,
+    ) -> dict:
+        """
+        Evaluate responses as they arrive, while deferring final score updates
+        until the dispatch timeout completes.
+        """
+        self._evaluation_start = time.time()
+        bt.logging.info(" Evaluating responses (streaming)")
+
+        if self._evaluator is None:
+            self._evaluator = Evaluator()
+            bt.logging.info("✓ Initialized Evaluator")
+
+        round_id = self.get_current_round_id()
+        try:
+            self._ledger(
+                "evaluation_start",
+                {
+                    "round_id": round_id,
+                    "task_ids": [getattr(t, "task_id", None) for t in (tasks or [])],
+                    "target_uids": [int(uid) for uid, _ in (targets or [])],
+                },
+            )
+        except Exception:
+            pass
+
+        task_by_id: dict[str, ACTaskSpec | dict] = {}
+        for task in tasks:
+            task_id = task.get("task_id") if isinstance(task, dict) else getattr(task, "task_id", None)
+            if task_id:
+                task_by_id[str(task_id)] = task
+
+        score_sums_by_uid: dict[int, float] = {}
+        score_counts_by_uid: dict[int, int] = {}
+        api_scores_by_uid: dict[int, float] = {}
+        api_counts_by_uid: dict[int, int] = {}
+        validation_by_uid: dict[int, dict[str, dict]] = {}
+        validation_attempts_by_uid: dict[int, dict[str, dict]] = {}
+        seen_tasks_by_uid: dict[int, set[str]] = {}
+        state_lock = asyncio.Lock()
+
+        async def _process_item(item: tuple) -> None:
+            uid, task_id, response, latency, status, error = item
+            try:
+                uid_int = int(uid)
+            except Exception:
+                return
+            task = task_by_id.get(str(task_id))
+            if task is None:
+                bt.logging.debug(f"Streaming eval: unknown task_id={task_id} uid={uid_int}")
+                return
+
+            if response is None:
+                attempt = {"status": str(status) if status else "no_response"}
+                if error:
+                    attempt["error"] = str(error)
+                async with state_lock:
+                    validation_attempts_by_uid.setdefault(uid_int, {})[str(task_id)] = attempt
+                    seen_tasks_by_uid.setdefault(uid_int, set()).add(str(task_id))
+                    score_sums_by_uid[uid_int] = score_sums_by_uid.get(uid_int, 0.0)
+                    score_counts_by_uid[uid_int] = score_counts_by_uid.get(uid_int, 0) + 1
+                    api_scores_by_uid[uid_int] = api_scores_by_uid.get(uid_int, 0.0)
+                    api_counts_by_uid[uid_int] = api_counts_by_uid.get(uid_int, 0) + 1
+                return
+
+            score_value, validation_payload, attempt = await self._evaluate_task_response(
+                uid_int, task, response, round_id
+            )
+
+            async with state_lock:
+                validation_attempts_by_uid.setdefault(uid_int, {})[str(task_id)] = attempt
+                seen_tasks_by_uid.setdefault(uid_int, set()).add(str(task_id))
+                if validation_payload:
+                    validation_by_uid.setdefault(uid_int, {})[str(task_id)] = validation_payload
+                score_sums_by_uid[uid_int] = score_sums_by_uid.get(uid_int, 0.0) + float(score_value)
+                score_counts_by_uid[uid_int] = score_counts_by_uid.get(uid_int, 0) + 1
+                api_scores_by_uid[uid_int] = api_scores_by_uid.get(uid_int, 0.0) + float(score_value)
+                api_counts_by_uid[uid_int] = api_counts_by_uid.get(uid_int, 0) + 1
+
+            # Send feedback immediately for this response.
+            try:
+                if hasattr(self, "send_task_feedback"):
+                    await self.send_task_feedback(
+                        round_id=round_id,
+                        task_id=str(task_id),
+                        scores={uid_int: float(score_value)},
+                        latencies={uid_int: float(latency or 0.0)},
+                    )
+            except Exception as exc:
+                bt.logging.debug(f"Feedback skipped/failed: {exc}")
+
+        sentinel = object()
+        worker_count = max(1, int(VALIDATION_CONCURRENCY))
+
+        async def _worker() -> None:
+            while True:
+                item = await response_queue.get()
+                if item is sentinel:
+                    response_queue.task_done()
+                    break
+                try:
+                    await _process_item(item)
+                finally:
+                    response_queue.task_done()
+
+        workers = [asyncio.create_task(_worker()) for _ in range(worker_count)]
+
+        await dispatch_done.wait()
+        await response_queue.join()
+        for _ in workers:
+            await response_queue.put(sentinel)
+        await asyncio.gather(*workers, return_exceptions=True)
+
+        # Fill missing task responses with zeros.
+        for uid, _axon in (targets or []):
+            uid_int = int(uid)
+            seen = seen_tasks_by_uid.get(uid_int, set())
+            for task in tasks:
+                task_id = task.get("task_id") if isinstance(task, dict) else getattr(task, "task_id", None)
+                if not task_id:
+                    continue
+                task_id_str = str(task_id)
+                if task_id_str in seen:
+                    continue
+                validation_attempts_by_uid.setdefault(uid_int, {})[task_id_str] = {"status": "no_response"}
+                seen_tasks_by_uid.setdefault(uid_int, set()).add(task_id_str)
+                score_sums_by_uid[uid_int] = score_sums_by_uid.get(uid_int, 0.0)
+                score_counts_by_uid[uid_int] = score_counts_by_uid.get(uid_int, 0) + 1
+                api_scores_by_uid[uid_int] = api_scores_by_uid.get(uid_int, 0.0)
+                api_counts_by_uid[uid_int] = api_counts_by_uid.get(uid_int, 0) + 1
+
+        scores_dict: dict[int, float] = {}
+        for uid, _axon in (targets or []):
+            uid_int = int(uid)
+            count = int(score_counts_by_uid.get(uid_int, 0))
+            if count > 0:
+                scores_dict[uid_int] = float(score_sums_by_uid.get(uid_int, 0.0)) / float(count)
+            else:
+                scores_dict[uid_int] = 0.0
+
+        evaluation_time = time.time() - self._evaluation_start
+        return self._finalize_scores(
+            round_id=round_id,
+            tasks=tasks,
+            scores_dict=scores_dict,
+            api_scores_by_uid=api_scores_by_uid,
+            api_counts_by_uid=api_counts_by_uid,
+            validation_by_uid=validation_by_uid,
+            validation_attempts_by_uid=validation_attempts_by_uid,
+            evaluation_time=evaluation_time,
+        )
+
+    def _finalize_scores(
+        self,
+        *,
+        round_id: str,
+        tasks: List[ACTaskSpec],
+        scores_dict: dict[int, float],
+        api_scores_by_uid: dict[int, float],
+        api_counts_by_uid: dict[int, int],
+        validation_by_uid: dict[int, dict[str, dict]],
+        validation_attempts_by_uid: dict[int, dict[str, dict]],
+        evaluation_time: float,
+    ) -> dict:
+        valid_scores = sum(1 for s in scores_dict.values() if s > 0)
+        bt.logging.info(
+            f"✓ Evaluation completed in {evaluation_time:.2f}s | "
+            f"Valid scores: {valid_scores}/{len(scores_dict)}"
+        )
+
+        # Store per-task validation results for cleanup/inspection.
+        if validation_by_uid:
+            self._validation_results_by_round[round_id] = validation_by_uid
+        # Always store validation attempts, even when the API couldn't validate.
+        if validation_attempts_by_uid:
+            self._validation_attempts_by_round[round_id] = validation_attempts_by_uid
+
+        # Combine API score with relative latency score.
+        from subnet.validator.config import LATENCY_SCORING_ENABLED
+        final_scores = dict(scores_dict)
+        if LATENCY_SCORING_ENABLED and final_scores:
+            raw_latencies = self.get_latencies(round_id)
+            # Dispatch stores per-task latencies keyed by (uid, task_id).
+            # Convert to per-uid average.
+            latencies: dict[int, float] = {}
+            if isinstance(raw_latencies, dict):
+                accum: dict[int, float] = {}
+                counts: dict[int, int] = {}
+                for key, value in raw_latencies.items():
+                    if isinstance(key, tuple) and len(key) == 2:
+                        uid_key = key[0]
+                    else:
+                        uid_key = key
+                    try:
+                        uid_int = int(uid_key)
+                    except Exception:
+                        continue
+                    try:
+                        v = float(value)
+                    except Exception:
+                        v = 0.0
+                    accum[uid_int] = accum.get(uid_int, 0.0) + v
+                    counts[uid_int] = counts.get(uid_int, 0) + 1
+                for uid_int, total in accum.items():
+                    denom = max(1, int(counts.get(uid_int, 1)))
+                    latencies[uid_int] = total / float(denom)
+
+            # Relative latency scores are computed across miners that have a score.
+            uid_list = [int(uid) for uid in final_scores.keys()]
+            observed_latency_values = [
+                float(latencies[uid]) for uid in uid_list if uid in latencies
+            ]
+            min_latency = min(observed_latency_values) if observed_latency_values else 0.0
+            max_latency = max(observed_latency_values) if observed_latency_values else min_latency
+            latency_range = float(max_latency - min_latency)
+            denom = max(1e-9, latency_range)
+
+            api_w = float(API_SCORE_WEIGHT)
+            lat_w = float(LATENCY_SCORE_WEIGHT)
+            total_w = api_w + lat_w
+            if total_w <= 0:
+                api_w, lat_w, total_w = 1.0, 0.0, 1.0
+            api_w /= total_w
+            lat_w /= total_w
+
+            mode = str(LATENCY_SCORING_MODE or "relative").strip().lower()
+            gamma = max(0.0001, float(LATENCY_SCORE_GAMMA))
+            tie_eps = max(0.0, float(LATENCY_TIE_EPSILON_S))
+            tie_penalty = max(0.0, min(1.0, float(LATENCY_TIE_PENALTY_MAX)))
+
+            api_avg_by_uid: dict[int, float] = {}
+            for uid in uid_list:
+                api_sum = float(api_scores_by_uid.get(uid, 0.0))
+                api_cnt = max(1, int(api_counts_by_uid.get(uid, 0)))
+                api_avg_by_uid[int(uid)] = api_sum / float(api_cnt)
+
+            tie_mode = bool(
+                len(observed_latency_values) >= 2 and latency_range <= tie_eps and tie_penalty > 0.0
+            )
+            tie_latency_scores: dict[int, float] = {}
+            fastest_uids: set[int] | None = None
+            top_score_uids: set[int] | None = None
+
+            if mode in {"winner_take_all", "winner", "fastest"}:
+                # Fastest miner(s) among the highest API score get full latency weight; others get 0.
+                max_api = max((v for v in api_avg_by_uid.values() if v > 0.0), default=0.0)
+                top_score_uids = {
+                    int(uid)
+                    for uid, avg in api_avg_by_uid.items()
+                    if avg > 0.0 and abs(float(avg) - float(max_api)) <= 1e-9
+                }
+                if top_score_uids:
+                    candidate_latencies = {
+                        int(uid): float(latencies.get(int(uid), max_latency)) for uid in top_score_uids
+                    }
+                    fastest_latency = min(candidate_latencies.values())
+                    tied_fastest = [uid for uid, lat in candidate_latencies.items() if lat == fastest_latency]
+                    if len(tied_fastest) == 1:
+                        fastest_uids = {int(tied_fastest[0])}
+                    else:
+                        fastest_uids = set()
+                else:
+                    fastest_latency = min_latency
+                    fastest_uids = set()
+                winners_list = sorted(fastest_uids) if fastest_uids else []
+                top_list = sorted(top_score_uids) if top_score_uids else []
+                if len(winners_list) > 10:
+                    winners_msg = f"{len(winners_list)} uids"
+                else:
+                    winners_msg = ",".join(str(uid) for uid in winners_list) or "none"
+                if len(top_list) > 10:
+                    top_msg = f"{len(top_list)} uids"
+                else:
+                    top_msg = ",".join(str(uid) for uid in top_list) or "none"
+                bt.logging.info(
+                    f"⏱️ Latency mode=winner_take_all fastest={fastest_latency:.6f}s "
+                    f"winners={winners_msg} "
+                    f"top_score_uids={top_msg}"
+                )
+            elif tie_mode:
+                uid_sorted = sorted(
+                    uid_list,
+                    key=lambda u: (float(latencies.get(int(u), max_latency)), int(u)),
+                )
+                n = len(uid_sorted)
+                if n > 1:
+                    for rank, uid in enumerate(uid_sorted):
+                        frac = float(rank) / float(n - 1)
+                        tie_latency_scores[int(uid)] = max(0.0, min(1.0, 1.0 - frac * tie_penalty))
+                else:
+                    tie_latency_scores[int(uid_sorted[0])] = 1.0
+                bt.logging.info(
+                    f"⏱️ Latency tie-spread enabled: range={latency_range:.6f}s <= eps={tie_eps:.6f}s "
+                    f"penalty_max={tie_penalty:.3f}"
+                )
+
+            combined: dict[int, float] = {}
+            for uid in uid_list:
+                api_sum = float(api_scores_by_uid.get(uid, 0.0))
+                api_cnt = max(1, int(api_counts_by_uid.get(uid, 0)))
+                api_avg = api_sum / float(api_cnt)
+
+                # If the validator API score is 0, the overall score must be 0 (fail closed),
+                # regardless of how fast the miner responded.
+                if api_avg <= 0.0:
+                    combined[uid] = 0.0
+                    bt.logging.info(
+                        f"📊 UID {uid}: api=0.0000 -> final=0.0000 (latency ignored)"
+                    )
+                    continue
+
+                if uid in latencies:
+                    latency = float(latencies.get(uid, 0.0))
+                else:
+                    latency = float(max_latency)
+                if mode in {"winner_take_all", "winner", "fastest"}:
+                    if top_score_uids and int(uid) in top_score_uids:
+                        latency_score = 1.0 if fastest_uids and int(uid) in fastest_uids else 0.0
+                    else:
+                        latency_score = 0.0
+                elif tie_mode:
+                    latency_score = float(tie_latency_scores.get(int(uid), 1.0))
+                else:
+                    delta = (latency - min_latency) / denom
+                    delta = max(0.0, min(1.0, float(delta)))
+                    latency_score = float((1.0 - delta) ** gamma)
+
+                combined_score = api_w * float(api_avg) + lat_w * float(latency_score)
+                combined[uid] = max(0.0, min(1.0, float(combined_score)))
+
+                bt.logging.info(
+                    f"📊 UID {uid}: api={api_avg:.4f} latency={latency:.6f}s ({latency*1000.0:.1f}ms) "
+                    f"lat_score={latency_score:.4f} final={combined[uid]:.4f} "
+                    f"(weights api={api_w:.2f} lat={lat_w:.2f})"
+                )
+
+            final_scores = combined
+
+        self._scores_by_round[round_id] = final_scores
+        try:
+            # Recompute per-uid average latency for reporting (same logic as above).
+            raw_latencies = self.get_latencies(round_id)
+            latencies: dict[int, float] = {}
+            if isinstance(raw_latencies, dict):
+                accum: dict[int, float] = {}
+                counts: dict[int, int] = {}
+                for key, value in raw_latencies.items():
+                    if isinstance(key, tuple) and len(key) == 2:
+                        uid_key = key[0]
+                    else:
+                        uid_key = key
+                    try:
+                        uid_int = int(uid_key)
+                    except Exception:
+                        continue
+                    try:
+                        v = float(value)
+                    except Exception:
+                        v = 0.0
+                    accum[uid_int] = accum.get(uid_int, 0.0) + v
+                    counts[uid_int] = counts.get(uid_int, 0) + 1
+                for uid_int, total in accum.items():
+                    denom = max(1, int(counts.get(uid_int, 1)))
+                    latencies[uid_int] = total / float(denom)
+
+            self._ledger(
+                "evaluation_complete",
+                {
+                    "round_id": round_id,
+                    "evaluation_time_s": float(evaluation_time),
+                    "valid_scores": int(valid_scores),
+                    "validation_attempts": validation_attempts_by_uid,
+                    "scores": [
+                        {
+                            "uid": int(uid),
+                            "api_sum": float(api_scores_by_uid.get(int(uid), 0.0)),
+                            "api_count": int(api_counts_by_uid.get(int(uid), 0)),
+                            "avg_latency_s": float(latencies.get(int(uid), 0.0)),
+                            "final_score": float(final_scores.get(int(uid), 0.0)),
+                            "validation": validation_by_uid.get(int(uid), {}),
+                        }
+                        for uid in sorted(final_scores.keys(), key=lambda u: int(u))
+                    ],
+                },
+            )
+        except Exception:
+            pass
+        return final_scores
 
     def get_validation_results(self, round_id: Optional[str] = None) -> dict:
         if round_id is None:

@@ -43,6 +43,7 @@ class TaskDispatchMixin:
         tasks: List[ACTaskSpec],
         *,
         targets: Optional[List[Tuple[int, bt.AxonInfo]]] = None,
+        result_queue: Optional[asyncio.Queue] = None,
     ) -> Dict[int, Dict[str, Optional[TaskSynapse]]]:
         """
         Send tasks to miners and collect acknowledgments.
@@ -165,7 +166,10 @@ class TaskDispatchMixin:
                 )
                 for task in done:
                     try:
-                        send_results.append(task.result())
+                        result = task.result()
+                        send_results.append(result)
+                        if result_queue is not None:
+                            await result_queue.put(result)
                     except Exception as exc:
                         # Should be rare because _send_task_to_miner returns status on error,
                         # but guard so dispatch can't stall on an exception.
