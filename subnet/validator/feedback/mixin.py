@@ -38,6 +38,7 @@ class FeedbackMixin:
         task_id: str,
         scores: Dict[int, float],
         latencies: Dict[int, float],
+        feedback_texts: Optional[Dict[int, str]] = None,
     ) -> Dict[int, bool]:
         """
         Send task evaluation feedback to miners.
@@ -65,13 +66,18 @@ class FeedbackMixin:
 
         async def _send_feedback(uid: int, ax, score: float, latency: float) -> tuple:
             try:
+                feedback_text = None
+                if feedback_texts and uid in feedback_texts:
+                    feedback_text = feedback_texts.get(uid)
+                if not feedback_text:
+                    feedback_text = f"Score: {score:.4f}"
                 synapse = TaskFeedbackSynapse(
                     round_id=round_id,
                     task_id=task_id,
                     miner_uid=uid,
                     score=score,
                     latency_seconds=latency,
-                    feedback_text=f"Score: {score:.4f}",
+                    feedback_text=feedback_text,
                     suggestions=None,
                 )
 
