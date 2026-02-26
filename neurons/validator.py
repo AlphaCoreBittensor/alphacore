@@ -1184,27 +1184,43 @@ class Validator(
 			# Phase 6b: cleanup (send validation results back to miners).
 			try:
 				validation_results = {}
+				validation_attempts = {}
+				summary_by_uid = {}
 				try:
 					validation_results = self.get_validation_results(round_id) or {}
 				except Exception:
 					validation_results = {}
+				try:
+					validation_attempts = self.get_validation_attempts(round_id) or {}
+				except Exception:
+					validation_attempts = {}
+				try:
+					summary_by_uid = self.get_round_summary(round_id) or {}
+				except Exception:
+					summary_by_uid = {}
 
 				for task in tasks:
 					task_id = task.get("task_id") if isinstance(task, dict) else getattr(task, "task_id", "")
 					if not task_id:
 						continue
+					task_id_str = str(task_id)
 					for uid, axon in targets:
 						if uid < 0:
 							continue
 						uid_results = validation_results.get(uid) or {}
-						validation_payload = uid_results.get(task_id)
-						if not validation_payload:
-							continue
-
+						validation_payload = uid_results.get(task_id_str)
 						payload_to_send = dict(validation_payload) if isinstance(validation_payload, dict) else validation_payload
 						if isinstance(payload_to_send, dict):
 							payload_to_send.pop("tap", None)
-						cleanup = TaskCleanupSynapse(task_id=task_id, validation_response=payload_to_send)
+						attempt = (validation_attempts.get(uid) or {}).get(task_id_str, {})
+						summary = summary_by_uid.get(uid) or {}
+						cleanup = TaskCleanupSynapse(task_id=task_id, validation_response=payload_to_send or {})
+						if summary:
+							cleanup.summary = summary
+						if attempt:
+							cleanup.validation_attempt = attempt
+						cleanup.round_id = round_id or ""
+						cleanup.miner_uid = int(uid)
 						await self._dendrite_request(axons=[axon], synapse=cleanup, deserialize=False, timeout=10)
 			except Exception as exc:
 				bt.logging.debug(f"Cleanup skipped/failed: {exc}")

@@ -2,6 +2,8 @@ tasks/
 .venv-validation-api
 .venv-sandbox
 logs/
+local_runs/
+scripts/local_task_cycle.py
 AGENTS.md
 .DS_Store
 .terraform

@@ -49,6 +49,7 @@ class TaskEvaluationMixin:
         self._scores_by_round: dict = {}  # round_id -> {uid: score}
         self._validation_results_by_round: dict = {}  # round_id -> {uid: {task_id: dict}}
         self._validation_attempts_by_round: dict = {}  # round_id -> {uid: {task_id: dict}}
+        self._summary_by_round: dict = {}  # round_id -> {uid: summary dict}
         self._validation_client: Optional[ValidationAPIClient] = None
         self._validation_client_pool: Optional[ValidationAPIClientPool] = None
         self._task_ledger: TaskLedger = getattr(self, "_task_ledger", TaskLedger())
@@ -457,14 +458,23 @@ class TaskEvaluationMixin:
                 api_scores_by_uid[uid_int] = api_scores_by_uid.get(uid_int, 0.0) + float(score_value)
                 api_counts_by_uid[uid_int] = api_counts_by_uid.get(uid_int, 0) + 1
 
-            # Send feedback immediately for this response.
+            # Send feedback immediately for this response (lightweight status only).
             try:
                 if hasattr(self, "send_task_feedback"):
+                    status_text = "validation submitted"
+                    attempt_status = str((attempt or {}).get("status", "") or "").strip().lower()
+                    if attempt_status and attempt_status != "validated":
+                        err = (attempt or {}).get("error") or (attempt or {}).get("error_type")
+                        if err:
+                            status_text = f"validation error: {attempt_status} ({err})"
+                        else:
+                            status_text = f"validation error: {attempt_status}"
                     await self.send_task_feedback(
                         round_id=round_id,
                         task_id=str(task_id),
-                        scores={uid_int: float(score_value)},
-                        latencies={uid_int: float(latency or 0.0)},
+                        scores={uid_int: 0.0},
+                        latencies={uid_int: 0.0},
+                        feedback_texts={uid_int: status_text},
                     )
             except Exception as exc:
                 bt.logging.debug(f"Feedback skipped/failed: {exc}")
@@ -558,11 +568,11 @@ class TaskEvaluationMixin:
         # Combine API score with relative latency score.
         from subnet.validator.config import LATENCY_SCORING_ENABLED
         final_scores = dict(scores_dict)
+        latencies: dict[int, float] = {}
         if LATENCY_SCORING_ENABLED and final_scores:
             raw_latencies = self.get_latencies(round_id)
             # Dispatch stores per-task latencies keyed by (uid, task_id).
             # Convert to per-uid average.
-            latencies: dict[int, float] = {}
             if isinstance(raw_latencies, dict):
                 accum: dict[int, float] = {}
                 counts: dict[int, int] = {}
@@ -718,9 +728,39 @@ class TaskEvaluationMixin:
 
         self._scores_by_round[round_id] = final_scores
         try:
+            latency_mode = str(LATENCY_SCORING_MODE or "relative").strip().lower()
+        except Exception:
+            latency_mode = "relative"
+        # Build per-uid summary (for cleanup payloads).
+        summary_by_uid: dict[int, dict] = {}
+        winner_uid = None
+        winner_api = None
+        winner_latency = None
+        winner_final = None
+        if latency_mode in {"winner_take_all", "winner", "fastest"}:
+            if fastest_uids and len(fastest_uids) == 1:
+                winner_uid = next(iter(fastest_uids))
+                winner_api = float(api_avg_by_uid.get(int(winner_uid), 0.0))
+                winner_latency = float(latencies.get(int(winner_uid), 0.0))
+                winner_final = float(final_scores.get(int(winner_uid), 0.0))
+        for uid in sorted(final_scores.keys(), key=lambda u: int(u)):
+            uid_int = int(uid)
+            summary_by_uid[uid_int] = {
+                "miner_uid": uid_int,
+                "miner_api_score": float(api_avg_by_uid.get(uid_int, 0.0)),
+                "miner_latency_s": float(latencies.get(uid_int, 0.0)) if uid_int in latencies else None,
+                "final_score": float(final_scores.get(uid_int, 0.0)),
+                "winner_uid": int(winner_uid) if winner_uid is not None else None,
+                "winner_api_score": winner_api,
+                "winner_latency_s": winner_latency,
+                "winner_final_score": winner_final,
+                "latency_mode": latency_mode,
+            }
+        if summary_by_uid:
+            self._summary_by_round[round_id] = summary_by_uid
+        try:
             # Recompute per-uid average latency for reporting (same logic as above).
             raw_latencies = self.get_latencies(round_id)
-            latencies: dict[int, float] = {}
             if isinstance(raw_latencies, dict):
                 accum: dict[int, float] = {}
                 counts: dict[int, int] = {}
@@ -776,6 +816,11 @@ class TaskEvaluationMixin:
         if round_id is None:
             round_id = self.get_current_round_id()
         return self._validation_attempts_by_round.get(round_id, {})
+
+    def get_round_summary(self, round_id: Optional[str] = None) -> dict:
+        if round_id is None:
+            round_id = self.get_current_round_id()
+        return self._summary_by_round.get(round_id, {})
 
     # ------------------------------------------------------------------ #
     # Validation API Scoring
