@@ -8,6 +8,7 @@ modules/generation/terraform/providers/<provider>/*.py
 from __future__ import annotations
 
 import importlib
+import os
 import random
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -84,6 +85,15 @@ class TerraformTaskRegistry:
         builders = self.get_task_builders(provider)
         if not builders:
             raise RuntimeError(f"No task builders registered for provider '{provider}'.")
+        # Optional task bank filter for local testing (e.g., composite-only tasks).
+        prefer_bank = (os.getenv("ALPHACORE_TASK_BANK") or "").strip().lower() or "composite"
+        filtered = builders
+        if prefer_bank in {"composite", "composite_resource"}:
+            filtered = {k: v for k, v in builders.items() if "composite" in k}
+        elif prefer_bank in {"single", "single_resource"}:
+            filtered = {k: v for k, v in builders.items() if "single" in k}
+        if filtered:
+            builders = filtered
         name = random.choice(list(builders.keys()))
         return name, builders[name]
 

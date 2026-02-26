@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from modules.models import Invariant, TaskSpec, TerraformTask
 from modules.generation.repository import TaskRepository
 from modules.generation.terraform.providers.gcp import compositions
+from modules.generation.rules import build_rules_from_invariants
 from modules.generation.terraform.resource_templates import (
     ResourceInstance,
     ResourceTemplate,
@@ -90,6 +91,11 @@ class GCPDynamicTaskBank:
         }
         if family:
             metadata["composition_family"] = family.name
+        # Provide a ruleset representation of invariants for downstream prompt/validation logic.
+        try:
+            metadata["rules"] = build_rules_from_invariants(invariants).to_dict()
+        except Exception:
+            pass
 
         spec = TaskSpec(
             version="v0",

@@ -26,9 +26,10 @@ import random
 import re
 import textwrap
 import time
-from typing import Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 from modules.models import Invariant, TerraformTask
+from modules.generation.rules import Rule, RuleSet, ruleset_from_dict
 
 try:  # pragma: no cover - optional dependency
     from openai import OpenAI
@@ -369,18 +370,37 @@ class TaskInstructionGenerator:
         """
         Create miner-facing instructions describing the task.
         """
+        # Optional deterministic rules-only prompt (disabled by default).
+        rules_prompt = self._maybe_generate_rules_prompt(task)
+        if rules_prompt:
+            validated = self._postprocess_prompt(rules_prompt, task)
+            try:
+                self.last_trace = {
+                    "task_id": getattr(task.spec, "task_id", "") or "",
+                    "task_kind": getattr(task.spec, "kind", "") or "",
+                    "provider": getattr(task, "provider", ""),
+                    "model": None,
+                    "temperature": None,
+                    "retries": 0,
+                    "fallback_on_failure": False,
+                    "start_ts": time.time(),
+                    "duration_s": 0.0,
+                    "attempts": [],
+                    "success": True,
+                    "fallback_used": True,
+                    "final_attempt": 0,
+                    "error": None,
+                    "rules_prompt": True,
+                }
+            except Exception:
+                self.last_trace = None
+            return validated
+
         # If LLM is disabled, use fallback instructions directly
         if not self.enable_llm:
             started = time.time()
             fallback = self._fallback_instructions(task)
-            if self._prompt_postprocess == "full":
-                fallback = self._normalize_prompt_phrasing(fallback, task)
-            elif self._prompt_postprocess == "minimal":
-                fallback = self._normalize_submission_instructions(fallback, task)
-            fallback = self._downcase_invariant_enum_tokens(fallback, task)
-            fallback = self._ensure_provider_reference(fallback, task)
-            fallback = re.sub(r"\s+", " ", fallback).strip()
-            validated = self._enforce_allowed_content(fallback, task)
+            validated = self._postprocess_prompt(fallback, task)
             try:
                 self.last_trace = {
                     "task_id": getattr(task.spec, "task_id", "") or "",
@@ -518,6 +538,7 @@ class TaskInstructionGenerator:
             - Keep it under 220 words and prefer imperative voice.
             - Produce plain sentences with no markdown or special formatting characters.
             - Do not add requirements or artefacts beyond what is described above.
+            - When rule references indicate a shared token across multiple resources/fields, explicitly say they must match or reference the same identifier.
             - Do not append a token list or use labels like "Tokens:"; weave required identifiers into the natural sentences instead.
 
             Hard constraint:
@@ -787,6 +808,13 @@ class TaskInstructionGenerator:
         kind_description = self._describe_kind(spec.kind)
         metadata = spec.metadata or {}
         hints = metadata.get("hints") or []
+        rules_context = self._rules_context_from_metadata(metadata)
+        hard_mode = self._hard_mode_enabled()
+        if hard_mode and rules_context:
+            # Avoid overly-structured invariant text when rules are available.
+            requirements = "Use the rule references below to infer the concrete requirements."
+            # Drop highly templated hints when rules are present.
+            hints = [h for h in hints if not self._looks_like_pinned_hint(h)]
         submission_details = self._format_submission_details(task)
         background = self._background_context(task)
         context_blocks = [
@@ -796,6 +824,8 @@ class TaskInstructionGenerator:
             ("Resource requirements", requirements or "None"),
             ("Submission details", submission_details),
         ]
+        if rules_context:
+            context_blocks.append(("Rule references", rules_context))
         if task.validator_sa:
             context_blocks.append(("Verification principal", task.validator_sa))
         if hints:
@@ -804,6 +834,198 @@ class TaskInstructionGenerator:
         random.shuffle(context_blocks)
         formatted = [f"{title}:\n{body}" for title, body in context_blocks]
         return "\n\n".join(formatted)
+
+    def _postprocess_prompt(self, text: str, task: TerraformTask) -> str:
+        """
+        Apply shared post-processing steps and enforce required content.
+        """
+        if self._prompt_postprocess == "full":
+            text = self._normalize_prompt_phrasing(text, task)
+        elif self._prompt_postprocess == "minimal":
+            text = self._normalize_submission_instructions(text, task)
+        text = self._downcase_invariant_enum_tokens(text, task)
+        text = self._ensure_provider_reference(text, task)
+        text = re.sub(r"\s+", " ", text).strip()
+        return self._enforce_allowed_content(text, task)
+
+    def _maybe_generate_rules_prompt(self, task: TerraformTask) -> Optional[str]:
+        """
+        If rules metadata is present and deterministic mode is enabled, generate a prompt.
+        """
+        try:
+            mode = (os.getenv("ALPHACORE_RULE_PROMPT_MODE") or "").strip().lower()
+            if mode not in ("deterministic", "rules-only"):
+                return None
+            metadata = getattr(getattr(task, "spec", None), "metadata", None) or {}
+            rules_payload = metadata.get("rules")
+            if not isinstance(rules_payload, dict):
+                return None
+            ruleset = ruleset_from_dict(rules_payload)
+            return self._rules_prompt_from_ruleset(task, ruleset)
+        except Exception:
+            return None
+
+    def _rules_context_from_metadata(self, metadata: Dict[str, Any]) -> Optional[str]:
+        """
+        Summarize rules into an LLM-facing context block (keeps phrasing variable).
+        """
+        try:
+            rules_payload = metadata.get("rules")
+            if not isinstance(rules_payload, dict):
+                return None
+            ruleset = ruleset_from_dict(rules_payload)
+            lines: List[str] = []
+            token_usage: Dict[str, List[str]] = {}
+            for rule in ruleset.rules:
+                token = ruleset.tokens.get(rule.token)
+                token_value = token.value if token is not None else None
+                display_value = self._rule_value_text(token_value)
+                clause = self._rule_clause(rule, display_value)
+                lines.append(clause)
+                token_usage.setdefault(rule.token, []).append(clause)
+            # Add explicit shared-token notes to make linkage harder to ignore.
+            linkage_templates = [
+                "Shared token {token} must be reused across: {clauses}.",
+                "Use the same identifier {token} for all of: {clauses}.",
+                "Ensure these fields reference the identical token {token}: {clauses}.",
+                "Tie these together with {token}: {clauses}.",
+                "Keep {token} consistent for: {clauses}.",
+            ]
+            for token_id, clauses in token_usage.items():
+                if len(clauses) < 2:
+                    continue
+                token = ruleset.tokens.get(token_id)
+                token_value = token.value if token is not None else None
+                display_value = self._rule_value_text(token_value)
+                template = random.choice(linkage_templates)
+                lines.append(template.format(token=display_value, clauses=", ".join(clauses)))
+            if not lines:
+                return None
+            # Shuffle for variety so the LLM sees a different ordering each time.
+            random.shuffle(lines)
+            return "\n".join(lines)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _hard_mode_enabled() -> bool:
+        raw = os.getenv("ALPHACORE_PROMPT_HARD_MODE")
+        if raw is None:
+            return True
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _looks_like_pinned_hint(hint: str) -> bool:
+        if not hint:
+            return False
+        lowered = hint.lower()
+        # Heuristic: filter hints with obvious pinned identifiers or strict numeric values.
+        return any(ch.isdigit() for ch in lowered) or "token" in lowered
+
+    def _rule_clause(self, rule: Rule, value: str) -> str:
+        resource = self._humanize_resource_type(rule.resource_type)
+        field = self._humanize_field(rule.field)
+        op = rule.op
+        if op == "starts_with":
+            templates = [
+                f"{resource} {field} starts with {value}",
+                f"Make {resource} {field} start with {value}",
+                f"Use a {resource} where {field} starts with {value}",
+            ]
+        elif op == "ends_with":
+            templates = [
+                f"{resource} {field} ends with {value}",
+                f"Make {resource} {field} end with {value}",
+                f"Use a {resource} where {field} ends with {value}",
+            ]
+        else:
+            templates = [
+                f"{resource} {field} equals {value}",
+                f"Set {resource} {field} to {value}",
+                f"Use {value} for {resource} {field}",
+            ]
+        return random.choice(templates)
+
+    def _rules_prompt_from_ruleset(self, task: TerraformTask, ruleset: RuleSet) -> str:
+        """
+        Render a natural-language prompt from a ruleset.
+        """
+        background = self._background_context(task)
+        sentences: List[str] = [background]
+
+        grouped: Dict[str, List[Rule]] = {}
+        token_usage: Dict[str, List[str]] = {}
+        for rule in ruleset.rules:
+            grouped.setdefault(rule.group, []).append(rule)
+            token = ruleset.tokens.get(rule.token)
+            token_value = token.value if token is not None else None
+            display_value = self._rule_value_text(token_value)
+            token_usage.setdefault(rule.token, []).append(
+                f"{self._humanize_resource_type(rule.resource_type)} "
+                f"{self._humanize_field(rule.field)} {self._op_text(rule.op)} {display_value}"
+            )
+
+        for group_id in sorted(grouped.keys()):
+            rules = grouped[group_id]
+            if not rules:
+                continue
+            resource_type = self._humanize_resource_type(rules[0].resource_type)
+            clauses = []
+            for rule in rules:
+                token = ruleset.tokens.get(rule.token)
+                token_value = token.value if token is not None else None
+                display_value = self._rule_value_text(token_value)
+                clauses.append(
+                    f"{self._humanize_field(rule.field)} {self._op_text(rule.op)} {display_value}"
+                )
+            if clauses:
+                sentences.append(
+                    f"For the {resource_type}, ensure {self._join_clauses(clauses)}."
+                )
+
+        for token_id, clauses in token_usage.items():
+            if len(clauses) < 2:
+                continue
+            token = ruleset.tokens.get(token_id)
+            token_value = token.value if token is not None else None
+            display_value = self._rule_value_text(token_value)
+            sentences.append(
+                f"Reuse the token {display_value} across: {', '.join(clauses)}."
+            )
+
+        sentences.append(self._submission_sentence(task))
+        prompt = " ".join(s.strip() for s in sentences if s.strip()).strip()
+        prompt = self._ensure_validator_access_line(prompt, task)
+        return prompt
+
+    @staticmethod
+    def _rule_value_text(value: object) -> str:
+        if value is None:
+            return "<unset>"
+        if isinstance(value, str):
+            return value
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    @staticmethod
+    def _op_text(op: str) -> str:
+        if op == "starts_with":
+            return "starts with"
+        if op == "ends_with":
+            return "ends with"
+        return "equals"
+
+    @staticmethod
+    def _humanize_resource_type(resource_type: str) -> str:
+        if not resource_type:
+            return "resource"
+        raw = resource_type.replace(".", "_")
+        for prefix in ("google_", "aws_", "azurerm_"):
+            if raw.startswith(prefix):
+                raw = raw[len(prefix) :]
+                break
+        return raw.replace("_", " ") or "resource"
 
     @staticmethod
     def _background_context(task: TerraformTask) -> str:
