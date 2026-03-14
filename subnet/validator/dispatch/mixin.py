@@ -100,9 +100,9 @@ class TaskDispatchMixin:
                 synapse: TaskSynapse, uid: int, ax: bt.AxonInfo
             ) -> Tuple[int, str, Optional[TaskSynapse], float, str, Optional[str]]:
                 """Send one task to one miner."""
-                start = time.time()
                 try:
                     async with sem:
+                        start = time.perf_counter()
                         # Bound the await on our side as well; some underlying clients
                         # may not reliably enforce the requested timeout.
                         resp = await asyncio.wait_for(
@@ -126,16 +126,16 @@ class TaskDispatchMixin:
                             resp0 = None
                     except Exception:
                         pass
-                    latency = time.time() - start
+                    latency = time.perf_counter() - start
                     return uid, synapse.task_id, resp0, latency, "ok", None
                 except asyncio.TimeoutError:
-                    latency = time.time() - start
+                    latency = time.perf_counter() - start
                     bt.logging.debug(
                         f"✗ Timeout waiting for UID {uid} task {synapse.task_id[:8]}... | latency={latency:.2f}s"
                     )
                     return uid, synapse.task_id, None, latency, "timeout", None
                 except Exception as e:
-                    latency = time.time() - start
+                    latency = time.perf_counter() - start
                     bt.logging.debug(f"✗ Error sending task {synapse.task_id} to UID {uid}: {e}")
                     return uid, synapse.task_id, None, latency, "error", f"{type(e).__name__}: {e}"
 
